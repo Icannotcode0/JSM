@@ -1,0 +1,56 @@
+import { login } from "./api";
+import { revealAllNow, revealNow, stagger } from "./motion";
+
+const form = document.querySelector<HTMLFormElement>("#login-form")!;
+const errorEl = document.querySelector<HTMLParagraphElement>("#form-error")!;
+const submitBtn = document.querySelector<HTMLButtonElement>("#submit-btn")!;
+const submitLabel = document.querySelector<HTMLElement>("#submit-label")!;
+const card = document.querySelector<HTMLElement>(".auth-card")!;
+
+// The card scales up as it rises (see .auth-card[data-reveal] in style.css), so
+// it reads as coming toward you rather than being pushed up from below. Its
+// contents follow once it has landed — the container arrives, then fills.
+const fields = form.querySelectorAll<HTMLElement>("[data-reveal]");
+stagger(fields, 55, 180);
+
+requestAnimationFrame(() => {
+  revealNow(card);
+  revealAllNow(fields);
+});
+
+function setBusy(busy: boolean): void {
+  submitBtn.disabled = busy;
+  submitLabel.textContent = busy ? "Logging in…" : "Log in";
+
+  const existing = submitBtn.querySelector(".btn-spinner");
+  if (busy && !existing) {
+    const spinner = document.createElement("span");
+    spinner.className = "btn-spinner";
+    submitBtn.prepend(spinner);
+  } else if (!busy && existing) {
+    existing.remove();
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  // Fully remove the error before re-showing it, so the shake keyframe replays
+  // on a second failed attempt instead of staying finished from the first.
+  errorEl.hidden = true;
+
+  const email = (form.elements.namedItem("email") as HTMLInputElement).value.trim();
+  const password = (form.elements.namedItem("password") as HTMLInputElement).value;
+
+  setBusy(true);
+  const result = await login(email, password);
+
+  if (!result.ok) {
+    errorEl.textContent = result.error;
+    errorEl.hidden = false;
+    setBusy(false);
+    return;
+  }
+
+  window.location.href = "/dashboard";
+});

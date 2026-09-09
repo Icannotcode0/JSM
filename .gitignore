@@ -1,0 +1,17 @@
+# Local configuration. .env holds SESSION_SECRET and any future credentials —
+# it must never be committed. .env.example documents the keys instead.
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Uploaded resumes (Milestone 8) — user data, stored on local disk only
+uploads/
