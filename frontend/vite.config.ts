@@ -34,6 +34,11 @@ function cleanUrls(): Plugin {
 export default defineConfig({
   plugins: [cleanUrls()],
   server: {
+    // NOTE: every API route must be listed here by name. A route added to
+    // internal/http/routers.go and forgotten here is served the HTML shell by
+    // Vite and 404s in the browser while working fine against the backend —
+    // which is exactly how /reset-password broke.
+    //
     // The API lives at the root, not under a prefix: /me, /applications,
     // /login and friends (API.md). Only the browser-extension endpoint is
     // namespaced under /api. So the proxy has to name each API route
@@ -47,7 +52,7 @@ export default defineConfig({
     // with the HTML shell, so every filtered or paged request silently returns
     // a page instead of JSON.
     proxy: {
-      "^/(health|signup|logout|me|applications)(/|\\?|$)": {
+      "^/(health|signup|logout|me|reset-password|applications)(/|\\?|$)": {
         target: BACKEND,
         changeOrigin: false,
       },

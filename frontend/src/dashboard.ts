@@ -1,4 +1,5 @@
 import {
+  changePassword,
   createApplication,
   deleteApplication,
   getMe,
@@ -544,6 +545,76 @@ dialog.addEventListener("click", (e) => {
 
 document.querySelector<HTMLButtonElement>("#new-application-btn")!.addEventListener("click", () => {
   openEditor(null);
+});
+
+/* -------------------------------------------------------------------------
+   Change-password dialog
+   ------------------------------------------------------------------------- */
+
+const passwordDialog = document.querySelector<HTMLDialogElement>("#password-dialog")!;
+const passwordForm = document.querySelector<HTMLFormElement>("#password-form")!;
+const passwordError = document.querySelector<HTMLElement>("#password-error")!;
+const passwordSave = document.querySelector<HTMLButtonElement>("#password-save")!;
+
+function showPasswordError(message: string): void {
+  passwordError.textContent = message;
+  passwordError.hidden = false;
+}
+
+document.querySelector<HTMLButtonElement>("#change-password-btn")!.addEventListener("click", () => {
+  passwordForm.reset();
+  passwordError.hidden = true;
+  passwordDialog.showModal();
+  field<HTMLInputElement>("#p-current").focus();
+});
+
+for (const id of ["#password-close", "#password-cancel"]) {
+  document.querySelector<HTMLButtonElement>(id)!.addEventListener("click", () => passwordDialog.close());
+}
+
+passwordDialog.addEventListener("click", (e) => {
+  if (e.target === passwordDialog) passwordDialog.close();
+});
+
+passwordForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  passwordError.hidden = true;
+
+  const current = field<HTMLInputElement>("#p-current").value;
+  const next = field<HTMLInputElement>("#p-new").value;
+  const confirm = field<HTMLInputElement>("#p-confirm").value;
+
+  // The confirmation field is the one rule the server can't check — it only
+  // ever receives one new password. Everything else (length, uppercase,
+  // special character) is left to the server so there is a single authority,
+  // and its message is shown verbatim.
+  if (next !== confirm) {
+    showPasswordError("The new passwords don't match.");
+    return;
+  }
+  if (!current || !next) {
+    showPasswordError("Both fields are required.");
+    return;
+  }
+
+  passwordSave.disabled = true;
+  const original = passwordSave.textContent;
+  passwordSave.textContent = "Changing…";
+
+  try {
+    await changePassword(current, next);
+  } catch (err) {
+    showPasswordError(err instanceof Error ? err.message : "Could not change the password.");
+    passwordSave.disabled = false;
+    passwordSave.textContent = original;
+    return;
+  }
+
+  // The server destroys the session on success, so every subsequent request
+  // would 401. Leave for the login page rather than rendering a dashboard that
+  // is already logged out. No logout() call: the session is gone already.
+  passwordDialog.close();
+  window.location.href = "/login?password-changed=1";
 });
 
 document.querySelector<HTMLButtonElement>("#logout-btn")!.addEventListener("click", async () => {
