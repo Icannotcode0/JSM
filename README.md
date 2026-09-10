@@ -1,187 +1,310 @@
 # JSM — Job Search Manager
 
-  A local-first job application tracker. Log every application, the resume version you sent, compensation notes, and where each one stands — on a pipeline board that runs entirely on your own machine.
+A local-first job application tracker. Log every application, the resume version you sent, compensation notes, and where each one stands — on a pipeline board that runs entirely on your own machine.
 
-  No cloud, no accounts, no telemetry. Mongo and Redis run in Docker on loopback, the Go server binds `127.0.0.1`, and nothing leaves your computer.
+No cloud, no accounts, no telemetry. Mongo and Redis run in Docker on loopback, the Go server binds `127.0.0.1`, and nothing leaves your computer.
 
-  ---
+---
 
-  ## Why local-only
+## Why local-only
 
-  This is a single-user personal tool holding a fairly sensitive dataset: where you're applying, what you're paid, and what you said about it. The simplest way to keep that private is not to host it.
+This is a single-user personal tool holding a fairly sensitive dataset: where you're applying, what you're paid, and what you said about it. The simplest way to keep that private is not to host it.
 
-  That constraint shapes the design throughout — including the security model, which deliberately does *not* assume "local means trusted". Any page in another browser tab can attempt a drive-by `fetch()` to `localhost`, and cookies aren't port-scoped, so a page on any other localhost port shares this one's cookie jar. The backend is written as if it were internet-facing.
+That constraint shapes the design throughout — including the security model, which deliberately does *not* assume "local means trusted". Any page in another browser tab can attempt a drive-by `fetch()` to `localhost`, and cookies aren't port-scoped, so a page on any other localhost port shares this one's cookie jar. The backend is written as if it were internet-facing.
 
-  ---
+---
 
-  ## Stack
+## Stack
 
-  | Layer | Choice |
-  |---|---|
-  | Backend | Go 1.24, `net/http` (stdlib `ServeMux`, method + wildcard patterns) |
-  | Database | MongoDB 7 — applications and users |
-  | Sessions | Redis 7 — session hashes with a TTL |
-  | Frontend | TypeScript + Vite, zero runtime dependencies |
-  | Extension | Chrome MV3 (auto-capture from job boards — in progress) |
+| Layer | Choice |
+|---|---|
+| Backend | Go 1.24, `net/http` (stdlib `ServeMux`, method + wildcard patterns) |
+| Database | MongoDB 7 — applications and users |
+| Sessions | Redis 7 — session hashes with a TTL |
+| Frontend | TypeScript + Vite, zero runtime dependencies |
+| Extension | Chrome MV3 (auto-capture from job boards — in progress) |
 
-  No web framework, no frontend framework, no CSS library. A page advertising that nothing leaves your machine shouldn't open a connection to a font CDN on load.
+No web framework, no frontend framework, no CSS library. A page advertising that nothing leaves your machine shouldn't open a connection to a font CDN on load.
 
-  ---
+---
 
-  ## Getting started
+## Request lifecycle
 
-  **Requires:** Go 1.24+, Node 18+, Docker.
+```
+Browser
+  |
+  |  fetch(credentials: "include")
+  |  Cookie: jsm_session (HttpOnly) + jsm_csrf (readable by JS)
+  |  X-CSRF-TOKEN: <the jsm_csrf value, echoed back>
+  v
+Vite dev server :5173 --> proxies named API routes ------+   dev only; in
+  |                                                      |   production Go
+  +-- anything else: the HTML page                       |   serves the pages
+                                                         v
+                                        Go server :8080, bound to 127.0.0.1
+                                                         |
+  +------------------------------------------------------+
+  |
+  v
+RecoverMiddleware    a panic becomes 500; the process survives
+  |
+  v
+LoggingMiddleware    method, path, status, duration
+  |
+  v
+CSRFMiddleWare       safe methods    issue jsm_csrf, pass through
+  |                  unsafe methods  cookie == header, HMAC valid,
+  |                                  and token bound to this session
+  v
+root mux
+  |
+  +--> GET  /health            public
+  +--> POST /login             public
+  +--> POST /logout            public
+  |
+  +--> everything else
+         |
+         v
+       SessionRequired -----> protected mux
+         |                      GET    /me
+         |                      POST   /reset-password
+         |                      GET    /applications
+         |                      POST   /applications
+         |                      GET    /applications/{id}
+         |                      PATCH  /applications/{id}
+         |                      DELETE /applications/{id}
+         |
+         +-- resolves jsm_session against Redis and puts the
+             user ID on the request context
+```
 
-  ```bash
-  git clone git@github.com:Icannotcode0/JSM.git
-  cd JSM
+Routing is **protected by default**: the public surface is a three-line list and
+everything else falls through to the authenticated mux. Forgetting to guard a new
+route is therefore impossible — the failure is a `401` you notice on the first
+request, not an endpoint quietly serving your job search to anyone.
 
-  # 1. Databases (both bind to 127.0.0.1 only)
-  docker compose up -d
+CSRF wraps every route rather than only the mutating ones, because the middleware
+that *validates* a token on `POST` is also what *issues* it on `GET`. A cold
+client calls `GET /health` to obtain one.
 
-  # 2. Config
-  cp .env.example .env
-  #    Optional but recommended:
-  #      echo "SESSION_SECRET=$(openssl rand -base64 32)" >> .env
+---
 
-  # 3. Backend  — http://127.0.0.1:8080
-  cd backend && go run ./cmd/api
+## Getting started
 
-  # 4. Frontend — http://localhost:5173  (separate terminal)
-  cd frontend && npm install && npm run dev
-  ```
+**Requires:** Go 1.24+, Node 18+, Docker.
 
-  > **Note:** `config.Load()` reads `.env` relative to the process working directory. Running the server from `backend/` means it won't be found and every value silently falls back to its default. Run from the repo root, or export the variables.
+```bash
+git clone git@github.com:Icannotcode0/JSM.git
+cd JSM
 
-  ### Creating an account
+# 1. Databases (both bind to 127.0.0.1 only)
+docker compose up -d
 
-  `POST /signup` isn't built yet, so seed a user directly:
+# 2. Config
+cp .env.example .env
+#    Optional but recommended:
+#      echo "SESSION_SECRET=$(openssl rand -base64 32)" >> .env
 
-  ```bash
-  cd backend
-  cat > /tmp/seed.go <<'EOF'
-  package main
+# 3. Backend  — http://127.0.0.1:8080
+cd backend && go run ./cmd/api
 
-  import (
-        "context"
-        "fmt"
-        "time"
+# 4. Frontend — http://localhost:5173  (separate terminal)
+cd frontend && npm install && npm run dev
+```
 
-        "go.mongodb.org/mongo-driver/v2/bson"
-        "go.mongodb.org/mongo-driver/v2/mongo"
-        "go.mongodb.org/mongo-driver/v2/mongo/options"
-        "golang.org/x/crypto/bcrypt"
-  )
+> **Note:** `config.Load()` reads `.env` relative to the process working directory. Running the server from `backend/` means it won't be found and every value silently falls back to its default. Run from the repo root, or export the variables.
 
-  func main() {
-        ctx := context.Background()
-        c, err := mongo.Connect(options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
-        if err != nil {
-                panic(err)
-        }
-        defer c.Disconnect(ctx)
+### Creating an account
 
-        hash, err := bcrypt.GenerateFromPassword([]byte("change-this-password"), bcrypt.DefaultCost)
-        if err != nil {
-                panic(err)
-        }
+`POST /signup` isn't built yet, so seed a user directly:
 
-        res, err := c.Database("jobtracker").Collection("users").InsertOne(ctx, bson.M{
-                "email":         "you@example.com",
-                "password_hash": string(hash),
-                "name":          "Your Name",
-                "created_at":    time.Now(),
-                "updated_at":    time.Now(),
-        })
-        if err != nil {
-                panic(err)
-        }
-        fmt.Println("created user:", res.InsertedID)
-  }
-  EOF
-  go run /tmp/seed.go && rm /tmp/seed.go
-  ```
+```bash
+cd backend
+cat > /tmp/seed.go <<'EOF'
+package main
 
-  Then sign in at `http://localhost:5173/login`.
+import (
+      "context"
+      "fmt"
+      "time"
 
-  ---
+      "go.mongodb.org/mongo-driver/v2/bson"
+      "go.mongodb.org/mongo-driver/v2/mongo"
+      "go.mongodb.org/mongo-driver/v2/mongo/options"
+      "golang.org/x/crypto/bcrypt"
+)
 
-  ## API
+func main() {
+      ctx := context.Background()
+      c, err := mongo.Connect(options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
+      if err != nil {
+              panic(err)
+      }
+      defer c.Disconnect(ctx)
 
-  Base URL `http://127.0.0.1:8080`. Full reference in [`API.md`](API.md).
+      hash, err := bcrypt.GenerateFromPassword([]byte("change-this-password"), bcrypt.DefaultCost)
+      if err != nil {
+              panic(err)
+      }
 
-  | Method | Path | Auth | Status |
-  |---|---|---|---|
-  | `GET` | `/health` | — | ✅ |
-  | `POST` | `/login` | CSRF | ✅ |
-  | `POST` | `/logout` | CSRF | ✅ |
-  | `GET` | `/me` | session | ✅ |
-  | `GET` | `/applications` | session | ✅ |
-  | `POST` | `/applications` | session + CSRF | ✅ |
-  | `GET` | `/applications/{id}` | session | ✅ |
-  | `PATCH` | `/applications/{id}` | session + CSRF | ✅ |
-  | `DELETE` | `/applications/{id}` | session + CSRF | ✅ |
-  | `POST` | `/signup` | CSRF | 📝 planned |
-  | `POST` | `/applications/{id}/resumes` | session + CSRF | 📝 planned |
-  | `GET` | `/applications/{id}/resumes/{resumeId}` | session | 📝 planned |
-  | `POST` | `/api/extension/applications` | session + CSRF + origin | 📝 planned |
+      res, err := c.Database("jobtracker").Collection("users").InsertOne(ctx, bson.M{
+              "email":         "you@example.com",
+              "password_hash": string(hash),
+              "name":          "Your Name",
+              "created_at":    time.Now(),
+              "updated_at":    time.Now(),
+      })
+      if err != nil {
+              panic(err)
+      }
+      fmt.Println("created user:", res.InsertedID)
+}
+EOF
+go run /tmp/seed.go && rm /tmp/seed.go
+```
 
-  `GET /applications` accepts `?status=`, `?tag=`, `?q=` (substring search over company, role, tags, and notes), `?page=`, and `?page_size=`, returning `{applications, page, page_size, total}`.
+Then sign in at `http://localhost:5173/login`.
 
-  ### Conventions
+---
 
-  Success is `{"<resource>": {...}}`; errors are `{"error": "..."}`.
+## API
 
-  Every mutating request needs a session cookie **and** an `X-CSRF-TOKEN` header echoing the `jsm_csrf` cookie. That cookie is issued by any safe request, so a cold client calls `GET /health` first to obtain one.
+Base URL `http://127.0.0.1:8080`. Full reference in [`API.md`](API.md).
 
-  ---
+| Method | Path | Auth | Status |
+|---|---|---|---|
+| `GET` | `/health` | — | ✅ |
+| `POST` | `/login` | CSRF | ✅ |
+| `POST` | `/logout` | CSRF | ✅ |
+| `GET` | `/me` | session | ✅ |
+| `POST` | `/reset-password` | session + CSRF | ✅ |
+| `GET` | `/applications` | session | ✅ |
+| `POST` | `/applications` | session + CSRF | ✅ |
+| `GET` | `/applications/{id}` | session | ✅ |
+| `PATCH` | `/applications/{id}` | session + CSRF | ✅ |
+| `DELETE` | `/applications/{id}` | session + CSRF | ✅ |
+| `POST` | `/signup` | CSRF | 📝 planned |
+| `POST` | `/applications/{id}/resumes` | session + CSRF | 📝 planned |
+| `GET` | `/applications/{id}/resumes/{resumeId}` | session | 📝 planned |
+| `POST` | `/api/extension/applications` | session + CSRF + origin | 📝 planned |
 
-  ## Security model
+`GET /applications` accepts `?status=`, `?tag=`, `?q=` (substring search over company, role, tags, and notes), `?page=`, and `?page_size=`, returning `{applications, page, page_size, total}`.
 
-  Notes on the decisions that aren't obvious from the code:
+### Conventions
 
-  **CSRF tokens are signed and session-bound.** A plain double-submit cookie assumes an attacker can't write cookies into your browser. That assumption is weak here: cookies ignore ports, so a page on any other `localhost` origin shares this one's jar and could choose *both* halves of the pair. `SameSite` doesn't help either, since "site" also ignores the port. Tokens are therefore `<nonce>!<sessionID>.<HMAC>` — valid only if this server minted them *and* they're bound to the session presenting them. Binding also gives rotation for free: logging in changes the session ID, retroactively invalidating every token issued before the privilege change.
+Success is `{"<resource>": {...}}`; errors are `{"error": "..."}`.
 
-  **Login is constant-time across both failure modes.** Returning the same error message for "no such user" and "wrong password" is pointless if only one of them runs bcrypt — the ~30× timing gap enumerates accounts just as well. The unknown-user path burns an equivalent bcrypt comparison against a throwaway hash.
+Every mutating request needs a session cookie **and** an `X-CSRF-TOKEN` header echoing the `jsm_csrf` cookie. That cookie is issued by any safe request, so a cold client calls `GET /health` first to obtain one.
 
-  **Ownership lives in the query filter, not a post-read check.** Every application query is scoped by `user_id` inside the filter itself, so there's no code path that can read or write another user's document. A record belonging to someone else returns the same `404` as one that doesn't exist.
+---
 
-  **Routing is protected by default.** Authenticated routes sit on their own mux wrapped once in `SessionRequired`; the public surface is a three-line list, and everything else falls through to the protected group. Forgetting to guard a new route is therefore impossible — the failure mode is a `401` you notice immediately, not a silently public endpoint.
+## Security model
 
-  **All input is treated as untrusted,** including on the endpoints only the UI talks to. Length caps, HTML escaping at write time, `job_link` restricted to `http`/`https` (`javascript:`, `data:`, and `file:` are rejected), `regexp.QuoteMeta` on search terms before they reach Mongo, and a 1 MiB body cap. The browser extension will eventually POST scraped page content into the same models, and one validation path is safer than a "trusted" and an "untrusted" one that drift apart.
+Notes on the decisions that aren't obvious from the code:
 
-  ### Known gaps
+**CSRF tokens are signed and session-bound.** A plain double-submit cookie assumes an attacker can't write cookies into your browser. That assumption is weak here: cookies ignore ports, so a page on any other `localhost` origin shares this one's jar and could choose *both* halves of the pair. `SameSite` doesn't help either, since "site" also ignores the port. Tokens are therefore `<nonce>!<sessionID>.<HMAC>` — valid only if this server minted them *and* they're bound to the session presenting them. Binding also gives rotation for free: logging in changes the session ID, retroactively invalidating every token issued before the privilege change.
 
-  - No rate limiting on `/login` — bcrypt gives ~60 ms of natural throttling, nothing more.
-  - The CSRF cookie hardcodes `Secure: true`, which Safari rejects over `http://localhost`. Chrome and Firefox accept it.
-  - `SESSION_SECRET` unset means a random per-boot signing key: safe, but outstanding CSRF tokens don't survive a restart.
+**Login is constant-time across both failure modes.** Returning the same error message for "no such user" and "wrong password" is pointless if only one of them runs bcrypt — the ~30× timing gap enumerates accounts just as well. The unknown-user path burns an equivalent bcrypt comparison against a throwaway hash.
 
-  ---
+**Ownership lives in the query filter, not a post-read check.** Every application query is scoped by `user_id` inside the filter itself, so there's no code path that can read or write another user's document. A record belonging to someone else returns the same `404` as one that doesn't exist.
 
-  ## Layout
+**Routing is protected by default.** Authenticated routes sit on their own mux wrapped once in `SessionRequired`; the public surface is a three-line list, and everything else falls through to the protected group. Forgetting to guard a new route is therefore impossible — the failure mode is a `401` you notice immediately, not a silently public endpoint.
 
-  ```
-  backend/
-    cmd/api/            entrypoint — wiring, lifecycle, graceful shutdown
-    internal/
-      http/             router (public vs. authenticated) + handlers
-      service/          business logic and all validation
-      store/            persistence interfaces + Mongo implementations
-      authentication/   sessions, CSRF, password hashing
-      common/           mongoWrap, redisWrap, jsmHttp, logbuilder, metrics
-      domain/           wire and storage models
-  frontend/
-    src/                api client, dashboard, motion system
-  extension/            Chrome MV3 auto-capture (in progress)
-  ```
+**All input is treated as untrusted,** including on the endpoints only the UI talks to. Length caps, HTML escaping at write time, `job_link` restricted to `http`/`https` (`javascript:`, `data:`, and `file:` are rejected), `regexp.QuoteMeta` on search terms before they reach Mongo, and a 1 MiB body cap. The browser extension will eventually POST scraped page content into the same models, and one validation path is safer than a "trusted" and an "untrusted" one that drift apart.
 
-  Dependencies point inward: `http` → `service` → `store`. Handlers depend on a single-capability interface rather than the whole service aggregate, so each is testable with a one-method fake.
+### Known gaps
 
-  ---
+- No rate limiting on `/login` — bcrypt gives ~60 ms of natural throttling, nothing more.
+- The CSRF cookie hardcodes `Secure: true`, which Safari rejects over `http://localhost`. Chrome and Firefox accept it.
+- `SESSION_SECRET` unset means a random per-boot signing key: safe, but outstanding CSRF tokens don't survive a restart.
 
-  ## Documentation
+---
 
-  | File | Contents |
+## Layers
+
+```
+cmd/api                  wiring, startup order, graceful shutdown
+    |
+    v
+internal/http            router: the public list, then SessionRequired
+  http/handlers          decode, map errors to status codes, set cookies
+  http/middleware        recover, logging
+    |
+    v
+internal/service         validation, sanitising, business rules
+    |                    the only layer that decides what is allowed
+    v
+internal/store           capability interfaces:
+  store/mongo              HealthCheck | Authenticator | Applications
+    |                    + their Mongo implementations
+    v
+internal/common
+  mongoWrap ---> MongoDB     users, applications
+  redisWrap ---> Redis       sessions
+  jsmHttp                    JSON envelope, body cap
+  logbuilder, metrics
+
+used by every layer, owned by none:
+  internal/authentication    sessions, signed CSRF tokens, bcrypt
+  internal/domain            wire and storage models
+```
+
+Dependencies point one way — `http` → `service` → `store` — and nothing imports
+upward. Handlers depend on a single-capability interface rather than the whole
+service aggregate, so each one is testable with a one-method fake, and the store
+is swappable by changing `NewStore` alone.
+
+Validation lives in the service layer and nowhere else. There is no second
+opinion in a Mongo schema validator or a handler, so the rules cannot drift apart.
+
+---
+
+## Layout
+
+```
+backend/
+  cmd/api/            entrypoint — wiring, lifecycle, graceful shutdown
+  internal/
+    http/             router (public vs. authenticated) + handlers
+    service/          business logic and all validation
+    store/            persistence interfaces + Mongo implementations
+    authentication/   sessions, CSRF, password hashing
+    common/           mongoWrap, redisWrap, jsmHttp, logbuilder, metrics
+    domain/           wire and storage models
+frontend/
+  src/                api client, dashboard, motion system
+extension/            Chrome MV3 auto-capture (in progress)
+```
+
+Dependencies point inward: `http` → `service` → `store`. Handlers depend on a single-capability interface rather than the whole service aggregate, so each is testable with a one-method fake.
+
+## Tests and CI
+
+```bash
+cd backend
+go test ./...              # unit tests; store tests skip without a database
+go test -race ./...        # what CI runs
+```
+
+52 tests across four layers. The store-layer tests run against a real MongoDB
+and **skip themselves** when none is reachable, so the suite stays green on a
+machine with no database — each one creates a throwaway `jsm_test_*` database
+and drops it on cleanup, so they never touch your data. Point them elsewhere
+with `MONGO_TEST_URI`.
+
+`.github/workflows/ci.yml` runs on every pull request:
+
+| Job | Checks |
+|---|---|
+| Backend | `go mod tidy` drift, `gofmt`, `go vet`, build, `go test -race` against real Mongo and Redis service containers |
+| Frontend | `npm ci`, `tsc --noEmit`, production build |
+| Secret scan | refuses a tracked `.env`, or a non-blank `SESSION_SECRET` in `.env.example` |
+
+Because a skipped test looks like a passing one, CI asserts the database-backed
+tests actually ran rather than trusting a green summary.
+
+---
+
 ## Documentation
 
 | File | Contents |
@@ -198,8 +321,9 @@
 - [x] Auth: sessions, CSRF, login/logout
 - [x] Applications: full CRUD, filter, search, pagination
 - [x] Dashboard: pipeline board, stats, inline editor
+- [x] Change password, with session invalidation
+- [x] Test suite and CI on every pull request
 - [ ] `POST /signup`
 - [ ] Resume uploads (Milestone 8)
 - [ ] Browser extension auto-capture (Milestone 14)
 - [ ] Rate limiting on auth endpoints
-Tip: Use /btw to ask a quick side question without interrupting Claude's current work
