@@ -1621,6 +1621,39 @@ button.card {
   border-color: var(--danger);
 }
 
+/* A password form has three short fields; the editor's width would leave them
+   stranded in whitespace. */
+.dialog-narrow {
+  width: min(420px, calc(100vw - 2 * var(--s-5)));
+}
+
+.dialog-note {
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-subtle);
+  line-height: 1.5;
+}
+
+/* Confirmation carried across the redirect after a password change. */
+.auth-notice {
+  margin: 0 0 var(--s-5);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--status-offer-tint);
+  color: var(--status-offer);
+  font-size: var(--text-sm);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dialog[open],
   .dialog::backdrop {

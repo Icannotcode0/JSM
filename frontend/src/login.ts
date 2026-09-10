@@ -32,6 +32,18 @@ function setBusy(busy: boolean): void {
   }
 }
 
+// Arriving here from a password change is a redirect the user didn't ask for,
+// so say why. Without this it reads as being logged out at random.
+if (new URLSearchParams(window.location.search).has("password-changed")) {
+  const notice = document.querySelector<HTMLElement>("#login-notice");
+  if (notice) {
+    notice.textContent = "Password changed. Sign in with your new password.";
+    notice.hidden = false;
+  }
+  // Drop the query string so a refresh doesn't repeat the message.
+  window.history.replaceState({}, "", window.location.pathname);
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
