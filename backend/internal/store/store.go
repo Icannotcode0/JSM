@@ -18,6 +18,7 @@ type HealthCheck interface {
 type Authenticator interface {
 	LookupUserByEmail(ctx context.Context, email string) (domain.User, error)
 	LookupUserByID(ctx context.Context, id string) (domain.User, error)
+	EditPassword(ctx context.Context, userId string, password string) error
 }
 
 // Applications is the persistence surface for job applications.

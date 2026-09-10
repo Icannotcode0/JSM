@@ -37,3 +37,7 @@ func (s *userStore) LookupUserByEmail(ctx context.Context, email string) (domain
 func (s *userStore) LookupUserByID(ctx context.Context, id string) (domain.User, error) {
 	return mongoWrap.FindUserByID(ctx, s.db.Collection(userCollectionName), id)
 }
+
+func (s *userStore) EditPassword(ctx context.Context, userId string, password string) error {
+	return mongoWrap.EditUserPassword(ctx, s.db.Collection(userCollectionName), userId, password)
+}

@@ -31,6 +31,11 @@ func NewRouter(sm *authentication.SessionManager, services *service.Services) ht
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /me", userHandler.Me)
+	// Authenticated on purpose: changing a password requires proving you hold
+	// the current one, which means having a session to prove it with. The
+	// unauthenticated "forgot password" flow is a different endpoint and needs
+	// a mail transport JSM does not have.
+	protected.HandleFunc("POST /reset-password", authHandler.ResetPassword)
 	protected.HandleFunc("GET /applications", applicationHandler.List)
 	protected.HandleFunc("POST /applications", applicationHandler.Create)
 	protected.HandleFunc("GET /applications/{id}", applicationHandler.Get)
@@ -61,6 +66,7 @@ func NewRouter(sm *authentication.SessionManager, services *service.Services) ht
 	// Recover is outermost so it catches panics from the layers below it too.
 	return chain(root,
 		authentication.CSRFMiddleWare(sm),
+		middleware.LoggingMiddleware(),
 		middleware.RecoverMiddleware(),
 	)
 }

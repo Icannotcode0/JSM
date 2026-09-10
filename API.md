@@ -66,7 +66,7 @@ Auth: CSRF only.
 
 ---
 
-### `POST /login` — 📝 (Milestone 4)
+### `POST /login` — ✅
 Auth: CSRF only.
 
 **Request**
@@ -74,10 +74,17 @@ Auth: CSRF only.
 {"email": "a@b.com", "password": "..."}
 ```
 
-**200 OK** — sets the session cookie (`HttpOnly`) via `Set-Cookie`.
+**200 OK** — sets the session cookie (`HttpOnly`) plus a CSRF cookie rebound to
+the new session, via `Set-Cookie`.
 ```json
-{"user": {"id": "...", "email": "a@b.com", "name": "Ada", "created_at": "...", "updated_at": "..."}}
+{"status": "ok"}
 ```
+The user is deliberately *not* returned: `GET /me` is the single source of truth
+for user info, so there is only one shape to keep in sync.
+
+Both cookies matter. CSRF tokens are bound to a session, so the token that
+authorised this login stops being valid the instant the session exists — the
+response reissues one bound to it.
 
 **Errors**
 | Status | Body | Cause |
@@ -87,7 +94,7 @@ Auth: CSRF only.
 
 ---
 
-### `POST /logout` — 📝 (Milestone 5)
+### `POST /logout` — ✅
 Auth: session required.
 
 **Request:** no body.
@@ -100,7 +107,55 @@ Note: if no session cookie is present at all, this still returns `200 {"status":
 
 ---
 
-### `GET /me` — 📝 (Milestone 4)
+### `POST /reset-password` — ✅
+
+Auth: session + CSRF.
+
+Changes the password of the **currently signed-in user**. Despite the name this
+is a *change-password*, not a forgot-password reset: it requires an active
+session and proof of the current password. There is no unauthenticated
+password-recovery flow — that needs a mail transport JSM doesn't have.
+
+The account is taken from the session. There is deliberately no `email` or
+`user_id` field: accepting one would make this "change any user's password",
+gated only by whatever check the handler remembered to perform.
+
+**Request**
+```json
+{"current_password": "…", "new_password": "…"}
+```
+
+`new_password` must be at least 8 characters, at most 72 **bytes**, and contain
+at least one uppercase letter and one special character (Unicode punctuation or
+symbol — so `!` and `$` both count). The byte cap is bcrypt's: it truncates at
+72 bytes, so anything longer would be silently ignored rather than hashed.
+
+**200 OK**
+```json
+{"status": "ok"}
+```
+
+> **The session is destroyed on success.** The response clears the session
+> cookie and returns a CSRF cookie rebound to the anonymous state, so the client
+> must send the user back to sign in with the new password. Keeping the session
+> alive would mean a stolen token still worked after a rotation performed
+> because it was stolen.
+
+**Errors**
+| Status | Body | Cause |
+|---|---|---|
+| 400 | `{"error": "password must be at least 8 characters"}` | Too short |
+| 400 | `{"error": "password must be at most 72 bytes"}` | Exceeds bcrypt's limit |
+| 400 | `{"error": "password must contain an uppercase letter"}` | Missing uppercase |
+| 400 | `{"error": "password must contain a special character"}` | Missing punctuation/symbol |
+| 400 | `{"error": "new password must differ from the current one"}` | `new_password` equals `current_password` |
+| 401 | `{"error": "INCORRECT_CREDENTIALS"}` | `current_password` is wrong |
+| 401 | `{"error": "UNAUTHORIZED"}` | Session names a user that no longer exists |
+| 413 | `{"error": "REQUEST_TOO_LARGE"}` | Body exceeds the 1 MiB cap |
+
+---
+
+### `GET /me` — ✅
 Auth: session required.
 
 **200 OK**
@@ -117,7 +172,7 @@ Auth: session required.
 All routes below are scoped to the authenticated user — you only ever see/modify
 your own applications (filtered by `user_id` at the store layer).
 
-### `POST /applications` — 📝 (Milestone 6)
+### `POST /applications` — ✅
 Auth: session + CSRF.
 
 **Request**
@@ -147,10 +202,15 @@ Auth: session + CSRF.
 
 ---
 
-### `GET /applications` — 📝 (Milestones 6, 7)
+### `GET /applications` — ✅
 Auth: session required.
 
-**Query params** (all optional): `status`, `tag`, `page` (default 1), `page_size` (default 20).
+**Query params** (all optional): `status`, `tag`, `q`, `page` (default 1),
+`page_size` (default 20, max 200).
+
+`q` is a case-insensitive substring match over `company_name`, `position_title`,
+`tags`, and `notes`. The term is regex-escaped server-side, so metacharacters
+are matched literally rather than interpreted.
 
 **200 OK**
 ```json
@@ -161,7 +221,7 @@ Auth: session required.
 
 ---
 
-### `GET /applications/:id` — 📝 (Milestone 6)
+### `GET /applications/:id` — ✅
 Auth: session required.
 
 **200 OK**
@@ -176,7 +236,7 @@ Auth: session required.
 
 ---
 
-### `PATCH /applications/:id` — 📝 (Milestone 6)
+### `PATCH /applications/:id` — ✅
 Auth: session + CSRF.
 
 **Request:** any subset of the fields from `POST /applications`.
@@ -193,7 +253,7 @@ Auth: session + CSRF.
 
 ---
 
-### `DELETE /applications/:id` — 📝 (Milestone 6)
+### `DELETE /applications/:id` — ✅
 Auth: session + CSRF.
 
 **204 No Content** — no body.
