@@ -37,7 +37,7 @@ func FindUserByID(ctx context.Context, collection *mongo.Collection, id string) 
 
 func FindUserByEmail(ctx context.Context, collection *mongo.Collection, email string) (domain.User, error) {
 	var user domain.User
-	emailFilter := bson.D{{"email", email}}
+	emailFilter := bson.D{{Key: "email", Value: email}}
 	if err := collection.FindOne(ctx, emailFilter).Decode(&user); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return domain.User{}, ErrUserNotFound
@@ -45,6 +45,29 @@ func FindUserByEmail(ctx context.Context, collection *mongo.Collection, email st
 		return domain.User{}, fmt.Errorf("find user by email: %w", err)
 	}
 	return user, nil
+}
+
+func EditUserPassword(ctx context.Context, collection *mongo.Collection, userId string, passwordHash string) error {
+	objID, err := bson.ObjectIDFromHex(userId)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	update := bson.D{{Key: "$set", Value: bson.D{
+		{Key: "password_hash", Value: passwordHash},
+		{Key: "updated_at", Value: time.Now().UTC()},
+	}}}
+
+	res, err := collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	if err != nil {
+		return fmt.Errorf("edit user password: %w", err)
+	}
+	// UpdateOne reports no error when the filter matched nothing, so without
+	// this a password change against a deleted user would look like it worked.
+	if res.MatchedCount == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 // CreateUser inserts a new user, stamping ID/CreatedAt/UpdatedAt.

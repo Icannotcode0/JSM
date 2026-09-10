@@ -23,6 +23,16 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
+// ContextWithUserID is the write half of UserIDFromContext.
+//
+// SessionRequired is the only production caller — it exists as an exported
+// function so handler tests can build a request that looks authenticated
+// without standing up Redis and a real session. The key stays unexported, so
+// nothing outside this package can forge the value by other means.
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDKey, userID)
+}
+
 // CSRFMiddleWare implements the double-submit-cookie pattern: safe methods
 // ensure a CSRF cookie is present (issuing one if missing) and pass straight
 // through — no proof is required to *receive* a token; unsafe methods
@@ -103,7 +113,8 @@ func SessionRequired(sm *SessionManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), userIDKey, userID)
+			// UserId seeded into every session-required endpoint at this middleware
+			ctx := ContextWithUserID(r.Context(), userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

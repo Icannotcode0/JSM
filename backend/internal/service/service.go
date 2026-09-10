@@ -27,6 +27,9 @@ type HealthChecker interface {
 type Authenticator interface {
 	Authenticate(ctx context.Context, email string, password string) ([]*http.Cookie, error)
 	Logout(ctx context.Context, sessionID string) ([]*http.Cookie, error)
+	// sessionID is separate from userId because the session being ended is the
+	// one presenting the request, and only the handler can read it off the cookie.
+	ChangePassword(ctx context.Context, userId string, sessionID string, req domain.ChangePasswordRequest) ([]*http.Cookie, error)
 }
 
 // UserReader resolves the user behind a session.

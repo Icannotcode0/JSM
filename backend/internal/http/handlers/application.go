@@ -178,9 +178,16 @@ func writeServiceError(w http.ResponseWriter, op string, err error) {
 		jsmHttp.WriteJSONError(w, invalid.Reason, http.StatusBadRequest)
 	case errors.Is(err, service.ErrApplicationNotFound):
 		jsmHttp.WriteJSONError(w, metrics.ErrNotFound, http.StatusNotFound)
+	case errors.Is(err, service.ErrIncorrectCredentials):
+		// A wrong *current* password on a change-password request. 401, not
+		// 403: the session is fine, the credential supplied in the body is not.
+		jsmHttp.WriteJSONError(w, metrics.ErrIncorrectCredentials, http.StatusUnauthorized)
+	case errors.Is(err, service.ErrUserNotFound):
+		// A live session naming a user that no longer exists.
+		jsmHttp.WriteJSONError(w, metrics.ErrUnauthorized, http.StatusUnauthorized)
 	default:
 		logbuilder.NewDefaultInfoLevelLogger().
-			Error("[applications."+op+"]: failed", logbuilder.Fields{"error": err.Error()})
+			Error("["+op+"]: failed", logbuilder.Fields{"error": err.Error()})
 		jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
 	}
 }

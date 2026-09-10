@@ -236,6 +236,40 @@ export async function logout(): Promise<void> {
   }
 }
 
+/**
+ * Change the signed-in user's password.
+ *
+ * On success the server **destroys the current session** — it clears the
+ * session cookie and rebinds CSRF to the anonymous state — so the caller must
+ * send the user back to sign in with the new password. Continuing to render the
+ * dashboard afterwards would show a UI whose every subsequent request 401s.
+ *
+ * Rejections come back as ApiError with the server's own wording (which rule
+ * the new password missed, or that the current one was wrong), so callers can
+ * surface `err.message` directly rather than re-implementing the policy here
+ * and drifting from it.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  try {
+    await request("/reset-password", {
+      method: "POST",
+      body: { current_password: currentPassword, new_password: newPassword },
+    });
+  } catch (err) {
+    // The server reuses INCORRECT_CREDENTIALS here, which ERROR_COPY words for
+    // the login screen ("that email and password don't match"). No email is
+    // involved in this form, so re-word it rather than confusing the user about
+    // which field is wrong.
+    if (err instanceof ApiError && err.status === 401) {
+      throw new ApiError("Your current password is incorrect.", 401);
+    }
+    throw err;
+  }
+}
+
 /* -------------------------------------------------------------------------
    Applications
    ------------------------------------------------------------------------- */

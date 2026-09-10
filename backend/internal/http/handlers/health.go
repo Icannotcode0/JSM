@@ -23,9 +23,6 @@ func NewHealthHandler(health service.HealthChecker) *healthHandler {
 // backing store answers, 503 otherwise.
 func (h *healthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := h.health.HealthCheck(r.Context()); err != nil {
-		// The error names which dependency is down, which is exactly what an
-		// unauthenticated endpoint shouldn't hand to a caller. Log the detail,
-		// return the generic envelope.
 		log := logbuilder.NewDefaultInfoLevelLogger()
 		log.Error("health check failed", logbuilder.Fields{"error": err.Error()})
 

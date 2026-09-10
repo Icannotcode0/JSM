@@ -115,3 +115,47 @@ func (a *auth) Authenticate(w http.ResponseWriter, r *http.Request) {
 	}
 	jsmHttp.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
 }
+
+func (a *auth) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	resetLogger := logbuilder.NewDefaultInfoLevelLogger()
+	defer func() {
+		resetLogger.Track("Handler.ResetPassword", logbuilder.Fields{})
+	}()
+
+	// requireUser already writes 401 when the context has no user. Writing
+	// again here would commit a second status and body on the same response.
+	userId, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	jsmHttp.LimitBody(w, r)
+
+	req := &domain.ChangePasswordRequest{}
+	if err := jsmHttp.Decode(r.Context(), r.Body, req); err != nil {
+		status, code := http.StatusBadRequest, metrics.ErrBadRequest
+		var maxBytes *http.MaxBytesError
+		if errors.Is(err, jsmHttp.ErrBodyTooLarge) || errors.As(err, &maxBytes) {
+			status, code = http.StatusRequestEntityTooLarge, metrics.ErrRequestTooLarge
+		}
+		jsmHttp.WriteJSONError(w, code, status)
+		return
+	}
+
+	// The session to end is the one presenting this request; the service can't
+	// read it off the cookie, so it is resolved here and passed down.
+	cookies, err := a.authenticator.ChangePassword(
+		r.Context(), userId, a.sessions.SessionIDFromRequest(r), *req,
+	)
+	if err != nil {
+		writeServiceError(w, "ResetPassword", err)
+		return
+	}
+
+	// Cleared session cookie plus a CSRF cookie rebound to the anonymous state.
+	// Both must land before the body, since WriteJSON commits the header.
+	for _, c := range cookies {
+		http.SetCookie(w, c)
+	}
+	jsmHttp.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+}

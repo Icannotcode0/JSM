@@ -13,6 +13,7 @@ const (
 	ErrRequestTooLarge      = "REQUEST_TOO_LARGE"
 	ErrUnauthorized         = "UNAUTHORIZED"
 	ErrNotFound             = "NOT_FOUND"
+	ErrIdenticalCredentials = "IDENTICAL_CREDENTIALS"
 )
 
 const (
