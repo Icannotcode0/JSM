@@ -7,13 +7,12 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
-
-var ErrApplicationNotFound = errors.New("application not found")
 
 // scopeFilter is the only way this file builds a filter for a single document.
 //
@@ -21,7 +20,7 @@ var ErrApplicationNotFound = errors.New("application not found")
 // after the fact in the handler — that's what makes leaking another user's
 // document structurally impossible rather than a check someone can forget
 // (DATABASE.md, "Multi-tenancy"). A document that exists but belongs to someone
-// else simply doesn't match, so it returns ErrApplicationNotFound exactly like
+// else simply doesn't match, so it returns metrics.ErrApplicationNotFound exactly like
 // one that was never there, and the caller can't tell the difference.
 func scopeFilter(id, userID bson.ObjectID) bson.M {
 	return bson.M{"_id": id, "user_id": userID}
@@ -46,7 +45,7 @@ func FindApplicationByID(ctx context.Context, collection *mongo.Collection, id, 
 	err := collection.FindOne(ctx, scopeFilter(id, userID)).Decode(&app)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return domain.Application{}, ErrApplicationNotFound
+			return domain.Application{}, metrics.ErrApplicationNotFound
 		}
 		return domain.Application{}, fmt.Errorf("find application: %w", err)
 	}
@@ -140,7 +139,7 @@ func UpdateApplication(
 		Decode(&app)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return domain.Application{}, ErrApplicationNotFound
+			return domain.Application{}, metrics.ErrApplicationNotFound
 		}
 		return domain.Application{}, fmt.Errorf("update application: %w", err)
 	}
@@ -154,7 +153,7 @@ func DeleteApplication(ctx context.Context, collection *mongo.Collection, id, us
 		return fmt.Errorf("delete application: %w", err)
 	}
 	if res.DeletedCount == 0 {
-		return ErrApplicationNotFound
+		return metrics.ErrApplicationNotFound
 	}
 	return nil
 }

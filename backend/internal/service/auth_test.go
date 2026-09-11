@@ -9,7 +9,8 @@ import (
 	"time"
 
 	authen "github.com/Icannotcode0/job-app-manager/backend/internal/authentication"
-	"github.com/Icannotcode0/job-app-manager/backend/internal/common/mongoWrap"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/config"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -22,20 +23,39 @@ import (
    ------------------------------------------------------------------------- */
 
 type fakeUserStore struct {
-	user       domain.User
-	lookupErr  error
-	editErr    error
-	editedID   string
-	editedHash string
-	editCalls  int
+	user        domain.User
+	lookupErr   error
+	editErr     error
+	editedID    string
+	editedHash  string
+	editCalls   int
+	registerErr error
+	registered  []domain.User
+	// lookedUp records the address Authenticate actually queried with, which
+	// is the only place to see whether it normalised before looking up.
+	lookedUp []string
+	lookups  int
 }
 
-func (f *fakeUserStore) LookupUserByEmail(_ context.Context, _ string) (domain.User, error) {
+func (f *fakeUserStore) LookupUserByEmail(_ context.Context, email string) (domain.User, error) {
+	f.lookups++
+	f.lookedUp = append(f.lookedUp, email)
 	return f.user, f.lookupErr
 }
 
 func (f *fakeUserStore) LookupUserByID(_ context.Context, _ string) (domain.User, error) {
 	return f.user, f.lookupErr
+}
+
+// CreateUser records the user the service built, so tests can assert on
+// normalisation, sanitising, and hashing — all of which happen above this line,
+// making the recorded value the only place to see whether they ran.
+func (f *fakeUserStore) CreateUser(_ context.Context, user domain.User) (domain.User, error) {
+	if f.registerErr != nil {
+		return domain.User{}, f.registerErr
+	}
+	f.registered = append(f.registered, user)
+	return user, nil
 }
 
 func (f *fakeUserStore) EditPassword(_ context.Context, userId, hash string) error {
@@ -55,14 +75,14 @@ func TestEnforcePasswordComplexity(t *testing.T) {
 		{"valid", "NewPass1!", nil},
 		{"valid with dollar", "NewPass1$", nil},
 		{"valid with tilde", "NewPass1~", nil},
-		{"too short", "Ab1!", ErrInSufficientPasswordLength},
+		{"too short", "Ab1!", metrics.ErrInsufficientPasswordLength},
 		{"exactly 8 ok", "Abcdefg!", nil},
-		{"7 rejected", "Abcdef!", ErrInSufficientPasswordLength},
-		{"no uppercase", "newpass1!", ErrMissingUppercase},
-		{"no special", "NewPassword1", ErrMissingSpecialCharacters},
-		{"digits only", "12345678", ErrMissingUppercase},
+		{"7 rejected", "Abcdef!", metrics.ErrInsufficientPasswordLength},
+		{"no uppercase", "newpass1!", metrics.ErrMissingUppercase},
+		{"no special", "NewPassword1", metrics.ErrMissingSpecialCharacters},
+		{"digits only", "12345678", metrics.ErrMissingUppercase},
 		{"72 bytes ok", strings.Repeat("a", 69) + "A1!", nil},
-		{"73 bytes rejected", strings.Repeat("a", 70) + "A1!", ErrPasswordTooLong},
+		{"73 bytes rejected", strings.Repeat("a", 70) + "A1!", metrics.ErrPasswordTooLong},
 	}
 
 	for _, tc := range cases {
@@ -85,8 +105,8 @@ func TestComplexityLengthUnitsDifferForMultibyte(t *testing.T) {
 	}
 	// 30 runes but 90 bytes: over bcrypt's byte cap despite being short in runes.
 	long := "Aa1!" + strings.Repeat("密", 30)
-	if err := enforcePasswordComplexity(long); !errors.Is(err, ErrPasswordTooLong) {
-		t.Errorf("got %v, want ErrPasswordTooLong (%d runes, %d bytes)",
+	if err := enforcePasswordComplexity(long); !errors.Is(err, metrics.ErrPasswordTooLong) {
+		t.Errorf("got %v, want metrics.ErrPasswordTooLong (%d runes, %d bytes)",
 			err, len([]rune(long)), len(long))
 	}
 }
@@ -118,7 +138,7 @@ func newAuthWithUser(t *testing.T, password string) (*auth, *fakeUserStore) {
 		nil, time.Hour, "jsm_session", "jsm_csrf", "jsm_redirect", 10*time.Minute,
 		authen.CookieSettings{}, []byte("test-secret"),
 	)
-	return NewAuth(&store.Store{AuthenticateStore: fake}, sm), fake
+	return NewAuth(&store.Store{AuthenticateStore: fake}, sm, config.MailConfig{}), fake
 }
 
 func TestChangePasswordRejectsWrongCurrentPassword(t *testing.T) {
@@ -128,8 +148,8 @@ func TestChangePasswordRejectsWrongCurrentPassword(t *testing.T) {
 		CurrentPassword: "NotTheCurrentOne1!",
 		NewPassword:     "BrandNewPass1!",
 	})
-	if !errors.Is(err, ErrIncorrectCredentials) {
-		t.Fatalf("got %v, want ErrIncorrectCredentials", err)
+	if !errors.Is(err, metrics.ErrIncorrectCredentials) {
+		t.Fatalf("got %v, want metrics.ErrIncorrectCredentials", err)
 	}
 	// The critical assertion: nothing was written.
 	if fake.editCalls != 0 {
@@ -144,8 +164,8 @@ func TestChangePasswordRejectsWeakNewPassword(t *testing.T) {
 		CurrentPassword: "CurrentPass1!",
 		NewPassword:     "weak",
 	})
-	if !errors.Is(err, ErrInSufficientPasswordLength) {
-		t.Fatalf("got %v, want ErrInSufficientPasswordLength", err)
+	if !errors.Is(err, metrics.ErrInsufficientPasswordLength) {
+		t.Fatalf("got %v, want metrics.ErrInsufficientPasswordLength", err)
 	}
 	if fake.editCalls != 0 {
 		t.Error("a rejected password was still written to the store")
@@ -159,8 +179,8 @@ func TestChangePasswordRejectsIdenticalPassword(t *testing.T) {
 		CurrentPassword: "CurrentPass1!",
 		NewPassword:     "CurrentPass1!",
 	})
-	if !errors.Is(err, ErrIdenticalPasswords) {
-		t.Fatalf("got %v, want ErrIdenticalPasswords", err)
+	if !errors.Is(err, metrics.ErrIdenticalPasswords) {
+		t.Fatalf("got %v, want metrics.ErrIdenticalPasswords", err)
 	}
 	if fake.editCalls != 0 {
 		t.Error("store was written for a no-op change")
@@ -169,7 +189,7 @@ func TestChangePasswordRejectsIdenticalPassword(t *testing.T) {
 
 func TestChangePasswordPropagatesLookupFailure(t *testing.T) {
 	svc, fake := newAuthWithUser(t, "CurrentPass1!")
-	fake.lookupErr = mongoWrap.ErrUserNotFound
+	fake.lookupErr = metrics.ErrUserNotFound
 
 	_, err := svc.ChangePassword(context.Background(), "uid", "", domain.ChangePasswordRequest{
 		CurrentPassword: "CurrentPass1!",

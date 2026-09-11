@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -77,21 +78,21 @@ func TestApplicationsAreScopedByUser(t *testing.T) {
 	seedApp(t, col, bob, "Globex", "applied")
 
 	t.Run("get another user's document is not found", func(t *testing.T) {
-		if _, err := FindApplicationByID(ctx, col, aliceApp.ID, bob); err != ErrApplicationNotFound {
-			t.Errorf("got %v, want ErrApplicationNotFound", err)
+		if _, err := FindApplicationByID(ctx, col, aliceApp.ID, bob); err != metrics.ErrApplicationNotFound {
+			t.Errorf("got %v, want metrics.ErrApplicationNotFound", err)
 		}
 	})
 
 	t.Run("update another user's document is not found", func(t *testing.T) {
 		_, err := UpdateApplication(ctx, col, aliceApp.ID, bob, bson.M{"notes": "pwned"})
-		if err != ErrApplicationNotFound {
-			t.Errorf("got %v, want ErrApplicationNotFound", err)
+		if err != metrics.ErrApplicationNotFound {
+			t.Errorf("got %v, want metrics.ErrApplicationNotFound", err)
 		}
 	})
 
 	t.Run("delete another user's document is not found", func(t *testing.T) {
-		if err := DeleteApplication(ctx, col, aliceApp.ID, bob); err != ErrApplicationNotFound {
-			t.Errorf("got %v, want ErrApplicationNotFound", err)
+		if err := DeleteApplication(ctx, col, aliceApp.ID, bob); err != metrics.ErrApplicationNotFound {
+			t.Errorf("got %v, want metrics.ErrApplicationNotFound", err)
 		}
 	})
 
@@ -272,7 +273,7 @@ func TestDeleteIsNotFoundTheSecondTime(t *testing.T) {
 	if err := DeleteApplication(ctx, col, app.ID, uid); err != nil {
 		t.Fatal(err)
 	}
-	if err := DeleteApplication(ctx, col, app.ID, uid); err != ErrApplicationNotFound {
-		t.Errorf("got %v, want ErrApplicationNotFound", err)
+	if err := DeleteApplication(ctx, col, app.ID, uid); err != metrics.ErrApplicationNotFound {
+		t.Errorf("got %v, want metrics.ErrApplicationNotFound", err)
 	}
 }

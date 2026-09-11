@@ -30,12 +30,29 @@ type CookieConfig struct {
 	Secret            string
 }
 
+// MailConfig controls whether JSM sends mail at all, and how.
+type MailConfig struct {
+	// RequireEmailVerification gates the signup verification round-trip.
+	//
+	// False — the local default — marks new accounts verified immediately and
+	// sends nothing, so a local install keeps the promise that nothing leaves
+	// the machine and works with no mail provider. A hosted deployment sets it
+	// true, and then an address has to be proved before the account is usable.
+	//
+	// The same code path runs either way; only this flag differs.
+	RequireEmailVerification bool
+
+	// FromAddress is the envelope sender for anything JSM does send.
+	FromAddress string
+}
+
 type Config struct {
 	Env      string
 	HTTPPort string
 	Mongo    MongoConfig
 	Redis    RedisConfig
 	Cookie   CookieConfig
+	Mail     MailConfig
 }
 
 // Load reads configuration from process environment variables, first
@@ -56,6 +73,12 @@ func Load() Config {
 	cookieSecure, err := strconv.ParseBool(getEnv("COOKIE_SECURE", "false"))
 	if err != nil {
 		cookieSecure = false
+	}
+	// Defaults to false: an unparseable value must not silently switch on a
+	// requirement the deployment has no mail transport to satisfy.
+	requireVerification, err := strconv.ParseBool(getEnv("REQUIRE_EMAIL_VERIFICATION", "false"))
+	if err != nil {
+		requireVerification = false
 	}
 
 	return Config{
@@ -79,6 +102,10 @@ func Load() Config {
 			Secure:            cookieSecure,
 			TTL:               time.Duration(ttlHours) * time.Hour,
 			Secret:            getEnv("SESSION_SECRET", ""),
+		},
+		Mail: MailConfig{
+			RequireEmailVerification: requireVerification,
+			FromAddress:              getEnv("MAIL_FROM", "jsm@localhost"),
 		},
 	}
 }

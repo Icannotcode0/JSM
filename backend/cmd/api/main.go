@@ -82,7 +82,7 @@ func run() error {
 		return err
 	}
 	store := store.NewStore(mongoClient.DB)
-	services := service.NewServices(store, sessionManager, redisClient)
+	services := service.NewServices(store, sessionManager, redisClient, cfg.Mail)
 
 	// Routing, and the public/authenticated split it encodes, lives in
 	// internal/http so main.go stays wiring only.

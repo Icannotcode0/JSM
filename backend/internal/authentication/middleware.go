@@ -52,7 +52,7 @@ func CSRFMiddleWare(sm *SessionManager) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodOptions || r.Method == http.MethodHead || r.Method == http.MethodGet {
 				if _, err := sm.EnsureCSRFToken(w, r); err != nil {
-					jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
+					jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 					return
 				}
 				next.ServeHTTP(w, r)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Icannotcode0/job-app-manager/backend/internal/authentication"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/config"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 	"github.com/redis/go-redis/v9"
@@ -26,10 +27,9 @@ type HealthChecker interface {
 // place and the handler's only job is to set what it is given.
 type Authenticator interface {
 	Authenticate(ctx context.Context, email string, password string) ([]*http.Cookie, error)
-	Logout(ctx context.Context, sessionID string) ([]*http.Cookie, error)
-	// sessionID is separate from userId because the session being ended is the
-	// one presenting the request, and only the handler can read it off the cookie.
 	ChangePassword(ctx context.Context, userId string, sessionID string, req domain.ChangePasswordRequest) ([]*http.Cookie, error)
+	CreateUser(ctx context.Context, req domain.SignUpRequest) (domain.User, error)
+	Logout(ctx context.Context, sessionID string) ([]*http.Cookie, error)
 }
 
 // UserReader resolves the user behind a session.
@@ -56,10 +56,15 @@ type Services struct {
 	Applications ApplicationService
 }
 
-func NewServices(store *store.Store, sm *authentication.SessionManager, rds *redis.Client) *Services {
+func NewServices(
+	store *store.Store,
+	sm *authentication.SessionManager,
+	rds *redis.Client,
+	mail config.MailConfig,
+) *Services {
 	return &Services{
 		Health:       NewHealth(store, rds),
-		Auth:         NewAuth(store, sm),
+		Auth:         NewAuth(store, sm, mail),
 		Users:        NewUsers(store),
 		Applications: NewApplications(store),
 	}

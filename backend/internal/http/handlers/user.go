@@ -24,22 +24,22 @@ func NewUserHandler(users service.UserReader) *userHandler {
 func (h *userHandler) Me(w http.ResponseWriter, r *http.Request) {
 	userID, ok := authentication.UserIDFromContext(r.Context())
 	if !ok {
-		jsmHttp.WriteJSONError(w, metrics.ErrUnauthorized, http.StatusUnauthorized)
+		jsmHttp.WriteJSONError(w, metrics.CodeUnauthorized, http.StatusUnauthorized)
 		return
 	}
 
 	user, err := h.users.Me(r.Context(), userID)
 	if err != nil {
-		if errors.Is(err, service.ErrUserNotFound) {
+		if errors.Is(err, metrics.ErrUserNotFound) {
 			// The session is valid but its user is gone (deleted account, or a
 			// database restored from an older snapshot). That's not a server
 			// fault — it means this session is no longer usable.
-			jsmHttp.WriteJSONError(w, metrics.ErrUnauthorized, http.StatusUnauthorized)
+			jsmHttp.WriteJSONError(w, metrics.CodeUnauthorized, http.StatusUnauthorized)
 			return
 		}
 		logbuilder.NewDefaultInfoLevelLogger().
 			Error("[Me]: lookup failed", logbuilder.Fields{"error": err.Error()})
-		jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
+		jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 		return
 	}
 

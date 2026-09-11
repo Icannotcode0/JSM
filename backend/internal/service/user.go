@@ -2,15 +2,10 @@ package service
 
 import (
 	"context"
-	"errors"
 
-	"github.com/Icannotcode0/job-app-manager/backend/internal/common/mongoWrap"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 )
-
-// ErrUserNotFound means the session named a user that no longer exists.
-var ErrUserNotFound = errors.New("user not found")
 
 type users struct {
 	store *store.Store
@@ -29,12 +24,7 @@ func NewUsers(s *store.Store) *users {
 // domain.User tags PasswordHash `json:"-"`, so the hash cannot leak through the
 // response even though it is loaded here.
 func (u *users) Me(ctx context.Context, userID string) (domain.User, error) {
-	user, err := u.store.AuthenticateStore.LookupUserByID(ctx, userID)
-	if err != nil {
-		if errors.Is(err, mongoWrap.ErrUserNotFound) {
-			return domain.User{}, ErrUserNotFound
-		}
-		return domain.User{}, err
-	}
-	return user, nil
+	// No translation step: the store already returns metrics.ErrUserNotFound,
+	// which is the same value the handler checks against.
+	return u.store.AuthenticateStore.LookupUserByID(ctx, userID)
 }
