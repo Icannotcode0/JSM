@@ -88,6 +88,7 @@ const ERROR_COPY: Record<string, string> = {
   SERVICE_UNAVAILABLE: "The server can't reach its database right now.",
   REQUEST_TOO_LARGE: "That request was too large.",
   NOT_FOUND: "That application no longer exists.",
+  EMAIL_ALREADY_REGISTERED: "An account with that email already exists.",
   UNAUTHORIZED: "Please sign in again.",
   unauthorized: "Please sign in again.",
   "csrf token missing": "Your session expired. Reload the page and try again.",
@@ -204,6 +205,37 @@ export async function login(email: string, password: string): Promise<LoginResul
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Login failed." };
+  }
+}
+
+export type SignUpResult = { ok: true; user: User } | { ok: false; error: string };
+
+/**
+ * Create an account.
+ *
+ * Deliberately does not sign the new user in: the server answers 201 with the
+ * user and no session cookie, so the caller sends them to the login page. That
+ * keeps one code path for "become authenticated" rather than two, and it is the
+ * path that has to keep working once email verification stands between signing
+ * up and being allowed in.
+ *
+ * The server owns every rule — address shape, password policy, whether the
+ * address is taken — and its messages are already prose, so they surface
+ * unchanged rather than being second-guessed here.
+ */
+export async function signUp(
+  email: string,
+  password: string,
+  name: string,
+): Promise<SignUpResult> {
+  try {
+    const body = await request<{ user: User }>("/signup", {
+      method: "POST",
+      body: { email, password, name },
+    });
+    return { ok: true, user: body!.user };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Could not create the account." };
   }
 }
 

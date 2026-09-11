@@ -11,8 +11,8 @@ import (
 
 	"github.com/Icannotcode0/job-app-manager/backend/internal/authentication"
 	jsmHttp "github.com/Icannotcode0/job-app-manager/backend/internal/common/jsmHttp"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
-	"github.com/Icannotcode0/job-app-manager/backend/internal/service"
 )
 
 /* ---------- fakes --------------------------------------------------------- */
@@ -23,12 +23,23 @@ type fakeAuthService struct {
 	gotUserID  string
 	gotSession string
 	gotReq     domain.ChangePasswordRequest
+	gotSignUp  domain.SignUpRequest
+	user       domain.User
 	calls      int
 }
 
 func (f *fakeAuthService) Authenticate(_ context.Context, _, _ string) ([]*http.Cookie, error) {
 	return f.cookies, f.err
 }
+
+// Present so the fake satisfies service.Authenticator. SignUp has its own
+// tests; these cases are about the change-password path.
+func (f *fakeAuthService) CreateUser(_ context.Context, req domain.SignUpRequest) (domain.User, error) {
+	f.calls++
+	f.gotSignUp = req
+	return f.user, f.err
+}
+
 func (f *fakeAuthService) Logout(_ context.Context, _ string) ([]*http.Cookie, error) {
 	return f.cookies, f.err
 }
@@ -177,10 +188,10 @@ func TestResetPasswordErrorMapping(t *testing.T) {
 		wantCode int
 		wantBody string
 	}{
-		{"wrong current password", service.ErrIncorrectCredentials, http.StatusUnauthorized, "INCORRECT_CREDENTIALS"},
-		{"policy failure", service.ErrInSufficientPasswordLength, http.StatusBadRequest, "password must be at least 8 characters"},
-		{"identical", service.ErrIdenticalPasswords, http.StatusBadRequest, "new password must differ from the current one"},
-		{"session user gone", service.ErrUserNotFound, http.StatusUnauthorized, "UNAUTHORIZED"},
+		{"wrong current password", metrics.ErrIncorrectCredentials, http.StatusUnauthorized, "INCORRECT_CREDENTIALS"},
+		{"policy failure", metrics.ErrInsufficientPasswordLength, http.StatusBadRequest, "password must be at least 8 characters"},
+		{"identical", metrics.ErrIdenticalPasswords, http.StatusBadRequest, "new password must differ from the current one"},
+		{"session user gone", metrics.ErrUserNotFound, http.StatusUnauthorized, "UNAUTHORIZED"},
 		{"unknown", errors.New("boom"), http.StatusInternalServerError, "INTERNAL_SERVER_ERROR"},
 	}
 

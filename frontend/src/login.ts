@@ -32,16 +32,26 @@ function setBusy(busy: boolean): void {
   }
 }
 
-// Arriving here from a password change is a redirect the user didn't ask for,
-// so say why. Without this it reads as being logged out at random.
-if (new URLSearchParams(window.location.search).has("password-changed")) {
+// Both routes into this page are redirects the user didn't explicitly ask for,
+// so each says why. Without it, a password change reads as being logged out at
+// random, and a successful signup reads as having failed.
+const NOTICES: Record<string, string> = {
+  "password-changed": "Password changed. Sign in with your new password.",
+  "account-created": "Account created. Sign in to get started.",
+};
+
+const params = new URLSearchParams(window.location.search);
+for (const [param, message] of Object.entries(NOTICES)) {
+  if (!params.has(param)) continue;
+
   const notice = document.querySelector<HTMLElement>("#login-notice");
   if (notice) {
-    notice.textContent = "Password changed. Sign in with your new password.";
+    notice.textContent = message;
     notice.hidden = false;
   }
   // Drop the query string so a refresh doesn't repeat the message.
   window.history.replaceState({}, "", window.location.pathname);
+  break;
 }
 
 form.addEventListener("submit", async (e) => {

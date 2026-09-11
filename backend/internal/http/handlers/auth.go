@@ -47,7 +47,7 @@ func (a *auth) Logout(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logbuilder.NewDefaultInfoLevelLogger().
 			Error("[Logout]: failed", logbuilder.Fields{"error": err.Error()})
-		jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
+		jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 		return
 	}
 
@@ -67,7 +67,7 @@ func (a *auth) Authenticate(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if err != nil {
-		jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
+		jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 		authLogger.Error("[Authenticate]: Internal Server Error", logbuilder.Fields{
 			"time":  time.Now(),
 			"error": err,
@@ -82,10 +82,10 @@ func (a *auth) Authenticate(w http.ResponseWriter, r *http.Request) {
 	if err := jsmHttp.Decode(ctx, r.Body, &logInRequest); err != nil {
 		// An oversized body is a distinct condition from malformed JSON, and
 		// 413 tells the client that retrying the same payload is pointless.
-		status, code := http.StatusBadRequest, metrics.ErrBadRequest
+		status, code := http.StatusBadRequest, metrics.CodeBadRequest
 		var maxBytes *http.MaxBytesError
 		if errors.Is(err, jsmHttp.ErrBodyTooLarge) || errors.As(err, &maxBytes) {
-			status, code = http.StatusRequestEntityTooLarge, metrics.ErrRequestTooLarge
+			status, code = http.StatusRequestEntityTooLarge, metrics.CodeRequestTooLarge
 		}
 		jsmHttp.WriteJSONError(w, code, status)
 		authLogger.Error("[Authenticate]: Error decoding body]", logbuilder.Fields{
@@ -100,11 +100,11 @@ func (a *auth) Authenticate(w http.ResponseWriter, r *http.Request) {
 			"error": err,
 			"email": logInRequest.Email,
 		})
-		if errors.Is(err, service.ErrIncorrectCredentials) {
-			jsmHttp.WriteJSONError(w, metrics.ErrIncorrectCredentials, http.StatusUnauthorized)
+		if errors.Is(err, metrics.ErrIncorrectCredentials) {
+			jsmHttp.WriteJSONError(w, metrics.CodeIncorrectCredentials, http.StatusUnauthorized)
 			return
 		}
-		jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
+		jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 		return
 	}
 
@@ -133,10 +133,10 @@ func (a *auth) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	req := &domain.ChangePasswordRequest{}
 	if err := jsmHttp.Decode(r.Context(), r.Body, req); err != nil {
-		status, code := http.StatusBadRequest, metrics.ErrBadRequest
+		status, code := http.StatusBadRequest, metrics.CodeBadRequest
 		var maxBytes *http.MaxBytesError
 		if errors.Is(err, jsmHttp.ErrBodyTooLarge) || errors.As(err, &maxBytes) {
-			status, code = http.StatusRequestEntityTooLarge, metrics.ErrRequestTooLarge
+			status, code = http.StatusRequestEntityTooLarge, metrics.CodeRequestTooLarge
 		}
 		jsmHttp.WriteJSONError(w, code, status)
 		return
@@ -158,4 +158,58 @@ func (a *auth) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, c)
 	}
 	jsmHttp.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+}
+
+// SignUp handler takes a sign-up request from the frontend, parses the email, name and the password,
+// calls service to store them properly. Login DOES NOT give the session Token, frontend will redirect
+// the user to the login page, the user will use their credentials registered to authenticate themselves
+
+// Service Layer should perform the verifications of the email, name and password
+
+// TODO: Will integrate Oauth 2.0
+
+func (a *auth) SignUp(w http.ResponseWriter, r *http.Request) {
+	logger := logbuilder.NewDefaultInfoLevelLogger()
+	defer func() {
+		logger.Track("Handler.SignUp", logbuilder.Fields{})
+	}()
+
+	ctx := r.Context()
+	signUpRequest := &domain.SignUpRequest{}
+	jsmHttp.LimitBody(w, r)
+	if err := jsmHttp.Decode(r.Context(), r.Body, signUpRequest); err != nil {
+		status, code := http.StatusBadRequest, metrics.CodeBadRequest
+		var maxBytes *http.MaxBytesError
+		if errors.Is(err, jsmHttp.ErrBodyTooLarge) || errors.As(err, &maxBytes) {
+			status, code = http.StatusRequestEntityTooLarge, metrics.CodeRequestTooLarge
+		}
+		jsmHttp.WriteJSONError(w, code, status)
+		return
+	}
+
+	user, err := a.authenticator.CreateUser(ctx, *signUpRequest)
+	if err != nil {
+		// errors.Is against a shared sentinel, not strings.Contains on the
+		// message. Matching on text breaks the moment someone rewords an error,
+		// and it silently matches the wrong condition when one message happens
+		// to contain another.
+		var invalid metrics.InvalidInputError
+		switch {
+		case errors.Is(err, metrics.ErrEmailTaken):
+			// 409, not 401: the request was authentic and well-formed, the
+			// address is simply taken.
+			jsmHttp.WriteJSONError(w, metrics.CodeEmailAlreadyTaken, http.StatusConflict)
+
+		case errors.As(err, &invalid):
+			jsmHttp.WriteJSONError(w, invalid.Reason, http.StatusBadRequest)
+		default:
+			logger.Error("[SignUp]: failed", logbuilder.Fields{"error": err.Error()})
+			jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// 201 with the created user, per API.md. domain.User tags PasswordHash
+	// `json:"-"`, so the hash cannot leak through this response.
+	jsmHttp.WriteJSON(w, map[string]any{"user": user}, http.StatusCreated)
 }

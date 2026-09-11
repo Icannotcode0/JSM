@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -52,9 +53,9 @@ func TestCreateRequiresCompanyAndTitle(t *testing.T) {
 		"whitespace": {CompanyName: "   ", PositionTitle: "Engineer"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			var invalid ErrInvalidInput
+			var invalid metrics.InvalidInputError
 			if _, err := svc.Create(context.Background(), uid, req); !errors.As(err, &invalid) {
-				t.Errorf("got %v, want ErrInvalidInput", err)
+				t.Errorf("got %v, want metrics.InvalidInputError", err)
 			}
 		})
 	}
@@ -62,12 +63,12 @@ func TestCreateRequiresCompanyAndTitle(t *testing.T) {
 
 func TestCreateRejectsBadStatus(t *testing.T) {
 	svc, _ := newApps()
-	var invalid ErrInvalidInput
+	var invalid metrics.InvalidInputError
 	_, err := svc.Create(context.Background(), validUserID(), domain.CreateApplicationRequest{
 		CompanyName: "Acme", PositionTitle: "Engineer", Status: "hired",
 	})
 	if !errors.As(err, &invalid) {
-		t.Fatalf("got %v, want ErrInvalidInput", err)
+		t.Fatalf("got %v, want metrics.InvalidInputError", err)
 	}
 }
 
@@ -96,7 +97,7 @@ func TestCreateRejectsDangerousJobLinkSchemes(t *testing.T) {
 		"JavaScript:alert(1)", // scheme comparison must be case-insensitive
 	} {
 		t.Run(link, func(t *testing.T) {
-			var invalid ErrInvalidInput
+			var invalid metrics.InvalidInputError
 			_, err := svc.Create(context.Background(), uid, domain.CreateApplicationRequest{
 				CompanyName: "Acme", PositionTitle: "Engineer", JobLink: link,
 			})
@@ -212,11 +213,11 @@ func TestListBoundsPaging(t *testing.T) {
 
 func TestListRejectsUnknownStatusFilter(t *testing.T) {
 	svc, _ := newApps()
-	var invalid ErrInvalidInput
+	var invalid metrics.InvalidInputError
 	if _, err := svc.List(context.Background(), validUserID(), domain.ListApplicationsQuery{
 		Status: "bogus",
 	}); !errors.As(err, &invalid) {
-		t.Errorf("got %v, want ErrInvalidInput", err)
+		t.Errorf("got %v, want metrics.InvalidInputError", err)
 	}
 }
 
@@ -228,10 +229,10 @@ func TestMalformedApplicationIDIsNotFound(t *testing.T) {
 	svc, _ := newApps()
 	uid := validUserID()
 
-	if _, err := svc.Get(context.Background(), uid, "not-an-objectid"); !errors.Is(err, ErrApplicationNotFound) {
-		t.Errorf("Get: got %v, want ErrApplicationNotFound", err)
+	if _, err := svc.Get(context.Background(), uid, "not-an-objectid"); !errors.Is(err, metrics.ErrApplicationNotFound) {
+		t.Errorf("Get: got %v, want metrics.ErrApplicationNotFound", err)
 	}
-	if err := svc.Delete(context.Background(), uid, "not-an-objectid"); !errors.Is(err, ErrApplicationNotFound) {
-		t.Errorf("Delete: got %v, want ErrApplicationNotFound", err)
+	if err := svc.Delete(context.Background(), uid, "not-an-objectid"); !errors.Is(err, metrics.ErrApplicationNotFound) {
+		t.Errorf("Delete: got %v, want metrics.ErrApplicationNotFound", err)
 	}
 }

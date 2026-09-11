@@ -19,6 +19,7 @@ type Authenticator interface {
 	LookupUserByEmail(ctx context.Context, email string) (domain.User, error)
 	LookupUserByID(ctx context.Context, id string) (domain.User, error)
 	EditPassword(ctx context.Context, userId string, password string) error
+	CreateUser(ctx context.Context, user domain.User) (domain.User, error)
 }
 
 // Applications is the persistence surface for job applications.
@@ -28,10 +29,10 @@ type Authenticator interface {
 // another user's document (DATABASE.md, "Multi-tenancy").
 type Applications interface {
 	Create(ctx context.Context, app domain.Application) (domain.Application, error)
+	Delete(ctx context.Context, id, userID bson.ObjectID) error
 	Get(ctx context.Context, id, userID bson.ObjectID) (domain.Application, error)
 	List(ctx context.Context, userID bson.ObjectID, query domain.ListApplicationsQuery) ([]domain.Application, int64, error)
 	Update(ctx context.Context, id, userID bson.ObjectID, set bson.M) (domain.Application, error)
-	Delete(ctx context.Context, id, userID bson.ObjectID) error
 }
 
 // Store is the aggregate of every persistence capability, keyed by what it

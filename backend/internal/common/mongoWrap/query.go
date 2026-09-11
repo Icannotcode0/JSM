@@ -6,29 +6,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-var (
-	ErrUserNotFound = errors.New("user not found")
-	ErrEmailTaken   = errors.New("email already registered")
-	ErrInternal     = errors.New("internal error")
-	FEmailAddress   = "email"
-)
+// Sentinel errors live in internal/common/metrics so the store and the service
+// share one value — errors.Is then works from the Mongo call to the handler
+// with no translation step in between.
+var FEmailAddress = "email"
 
 // FindUserByID looks up a user by their Mongo _id (as a hex string).
 func FindUserByID(ctx context.Context, collection *mongo.Collection, id string) (domain.User, error) {
 	objID, err := bson.ObjectIDFromHex(id)
 	if err != nil {
-		return domain.User{}, ErrUserNotFound
+		return domain.User{}, metrics.ErrUserNotFound
 	}
 
 	var user domain.User
 	if err := collection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return domain.User{}, ErrUserNotFound
+			return domain.User{}, metrics.ErrUserNotFound
 		}
 		return domain.User{}, fmt.Errorf("find user by id: %w", err)
 	}
@@ -40,7 +39,7 @@ func FindUserByEmail(ctx context.Context, collection *mongo.Collection, email st
 	emailFilter := bson.D{{Key: "email", Value: email}}
 	if err := collection.FindOne(ctx, emailFilter).Decode(&user); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return domain.User{}, ErrUserNotFound
+			return domain.User{}, metrics.ErrUserNotFound
 		}
 		return domain.User{}, fmt.Errorf("find user by email: %w", err)
 	}
@@ -50,7 +49,7 @@ func FindUserByEmail(ctx context.Context, collection *mongo.Collection, email st
 func EditUserPassword(ctx context.Context, collection *mongo.Collection, userId string, passwordHash string) error {
 	objID, err := bson.ObjectIDFromHex(userId)
 	if err != nil {
-		return ErrUserNotFound
+		return metrics.ErrUserNotFound
 	}
 
 	update := bson.D{{Key: "$set", Value: bson.D{
@@ -65,7 +64,7 @@ func EditUserPassword(ctx context.Context, collection *mongo.Collection, userId 
 	// UpdateOne reports no error when the filter matched nothing, so without
 	// this a password change against a deleted user would look like it worked.
 	if res.MatchedCount == 0 {
-		return ErrUserNotFound
+		return metrics.ErrUserNotFound
 	}
 	return nil
 }
@@ -79,7 +78,7 @@ func CreateUser(ctx context.Context, collection *mongo.Collection, user domain.U
 
 	if _, err := collection.InsertOne(ctx, user); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			return domain.User{}, ErrEmailTaken
+			return domain.User{}, metrics.ErrEmailTaken
 		}
 		return domain.User{}, fmt.Errorf("create user: %w", err)
 	}

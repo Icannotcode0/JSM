@@ -23,6 +23,10 @@ import {
 void getMe().then((user) => {
   if (!user) return;
 
+  // An authenticated visitor has no use for "create an account".
+  const signupCta = document.querySelector<HTMLElement>("#hero-signup");
+  if (signupCta) signupCta.hidden = true;
+
   const ctas: [string, string][] = [
     ["#nav-cta", "Dashboard"],
     ["#hero-cta", "Go to dashboard"],

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -50,21 +51,21 @@ func TestFindUserByIDAndEmail(t *testing.T) {
 	})
 
 	t.Run("missing id", func(t *testing.T) {
-		if _, err := FindUserByID(ctx, col, bson.NewObjectID().Hex()); err != ErrUserNotFound {
-			t.Errorf("got %v, want ErrUserNotFound", err)
+		if _, err := FindUserByID(ctx, col, bson.NewObjectID().Hex()); err != metrics.ErrUserNotFound {
+			t.Errorf("got %v, want metrics.ErrUserNotFound", err)
 		}
 	})
 
 	// A malformed ID and an absent one are the same fact to a caller.
 	t.Run("malformed id", func(t *testing.T) {
-		if _, err := FindUserByID(ctx, col, "not-an-objectid"); err != ErrUserNotFound {
-			t.Errorf("got %v, want ErrUserNotFound", err)
+		if _, err := FindUserByID(ctx, col, "not-an-objectid"); err != metrics.ErrUserNotFound {
+			t.Errorf("got %v, want metrics.ErrUserNotFound", err)
 		}
 	})
 
 	t.Run("missing email", func(t *testing.T) {
-		if _, err := FindUserByEmail(ctx, col, "nobody@example.com"); err != ErrUserNotFound {
-			t.Errorf("got %v, want ErrUserNotFound", err)
+		if _, err := FindUserByEmail(ctx, col, "nobody@example.com"); err != metrics.ErrUserNotFound {
+			t.Errorf("got %v, want metrics.ErrUserNotFound", err)
 		}
 	})
 }
@@ -115,11 +116,11 @@ func TestEditUserPasswordOnMissingUser(t *testing.T) {
 	col := testDB(t).Collection("users")
 	ctx := context.Background()
 
-	if err := EditUserPassword(ctx, col, bson.NewObjectID().Hex(), "$2a$10$x"); err != ErrUserNotFound {
-		t.Errorf("absent user: got %v, want ErrUserNotFound", err)
+	if err := EditUserPassword(ctx, col, bson.NewObjectID().Hex(), "$2a$10$x"); err != metrics.ErrUserNotFound {
+		t.Errorf("absent user: got %v, want metrics.ErrUserNotFound", err)
 	}
-	if err := EditUserPassword(ctx, col, "not-an-objectid", "$2a$10$x"); err != ErrUserNotFound {
-		t.Errorf("malformed id: got %v, want ErrUserNotFound", err)
+	if err := EditUserPassword(ctx, col, "not-an-objectid", "$2a$10$x"); err != metrics.ErrUserNotFound {
+		t.Errorf("malformed id: got %v, want metrics.ErrUserNotFound", err)
 	}
 }
 
@@ -138,8 +139,8 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 	}
 
 	seedUser(t, col, "dupe@example.com")
-	if _, err := CreateUser(ctx, col, domain.User{Email: "dupe@example.com", Name: "Impostor"}); err != ErrEmailTaken {
-		t.Errorf("got %v, want ErrEmailTaken", err)
+	if _, err := CreateUser(ctx, col, domain.User{Email: "dupe@example.com", Name: "Impostor"}); err != metrics.ErrEmailTaken {
+		t.Errorf("got %v, want metrics.ErrEmailTaken", err)
 	}
 }
 

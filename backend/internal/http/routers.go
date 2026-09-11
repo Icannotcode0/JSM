@@ -47,6 +47,7 @@ func NewRouter(sm *authentication.SessionManager, services *service.Services) ht
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", healthHandler.HealthCheck)
 	root.HandleFunc("POST /login", authHandler.Authenticate)
+	root.HandleFunc("POST /signup", authHandler.SignUp)
 
 	// Logout is public rather than session-gated on purpose. Behind
 	// SessionRequired an already-expired session would get a 401, which is a

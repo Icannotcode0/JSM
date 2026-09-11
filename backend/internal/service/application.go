@@ -3,33 +3,22 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"html"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/Icannotcode0/job-app-manager/backend/internal/common/mongoWrap"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-// ErrApplicationNotFound covers both "no such application" and "belongs to
-// someone else" — the store can't tell them apart by design, and neither
-// should the caller (API.md).
-var ErrApplicationNotFound = errors.New("application not found")
-
-// ErrInvalidInput carries a caller-facing reason. It is the only error here
-// whose message is safe to return verbatim: every string in it is written
-// below, never interpolated from the database.
-type ErrInvalidInput struct{ Reason string }
-
-func (e ErrInvalidInput) Error() string { return e.Reason }
-
+// Sentinel errors and the InvalidInputError type live in
+// internal/common/metrics, so there is one definition per condition rather than
+// one per layer. invalid() stays here as a local shorthand.
 func invalid(format string, args ...any) error {
-	return ErrInvalidInput{Reason: fmt.Sprintf(format, args...)}
+	return metrics.Invalid(format, args...)
 }
 
 // Field caps. These exist because the browser extension will POST scraped page
@@ -223,7 +212,7 @@ func (a *applications) Get(ctx context.Context, userID, id string) (domain.Appli
 
 	app, err := a.store.Applications.Get(ctx, appID, uid)
 	if err != nil {
-		return domain.Application{}, mapStoreErr(err)
+		return domain.Application{}, err
 	}
 	return app, nil
 }
@@ -355,7 +344,7 @@ func (a *applications) Update(
 
 	app, err := a.store.Applications.Update(ctx, appID, uid, set)
 	if err != nil {
-		return domain.Application{}, mapStoreErr(err)
+		return domain.Application{}, err
 	}
 	return app, nil
 }
@@ -393,7 +382,7 @@ func (a *applications) Delete(ctx context.Context, userID, id string) error {
 		return err
 	}
 	if err := a.store.Applications.Delete(ctx, appID, uid); err != nil {
-		return mapStoreErr(err)
+		return err
 	}
 	return nil
 }
@@ -415,14 +404,7 @@ func parseIDs(userID, id string) (uid, appID bson.ObjectID, err error) {
 	}
 	appID, err = bson.ObjectIDFromHex(id)
 	if err != nil {
-		return uid, appID, ErrApplicationNotFound
+		return uid, appID, metrics.ErrApplicationNotFound
 	}
 	return uid, appID, nil
-}
-
-func mapStoreErr(err error) error {
-	if errors.Is(err, mongoWrap.ErrApplicationNotFound) {
-		return ErrApplicationNotFound
-	}
-	return err
 }

@@ -28,7 +28,7 @@ func (h *healthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 		// 503, not 500: the service itself is fine, its dependencies aren't —
 		// and 503 is what probes and load balancers act on.
-		jsmHttp.WriteJSONError(w, metrics.ErrServiceUnavailable, http.StatusServiceUnavailable)
+		jsmHttp.WriteJSONError(w, metrics.CodeServiceUnavailable, http.StatusServiceUnavailable)
 		return
 	}
 

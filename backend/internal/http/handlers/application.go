@@ -135,7 +135,7 @@ func (h *applicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func requireUser(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID, ok := authentication.UserIDFromContext(r.Context())
 	if !ok {
-		jsmHttp.WriteJSONError(w, metrics.ErrUnauthorized, http.StatusUnauthorized)
+		jsmHttp.WriteJSONError(w, metrics.CodeUnauthorized, http.StatusUnauthorized)
 		return "", false
 	}
 	return userID, true
@@ -158,10 +158,10 @@ func atoiOr(raw string, fallback int) int {
 func writeDecodeError(w http.ResponseWriter, err error) {
 	var maxBytes *http.MaxBytesError
 	if errors.Is(err, jsmHttp.ErrBodyTooLarge) || errors.As(err, &maxBytes) {
-		jsmHttp.WriteJSONError(w, metrics.ErrRequestTooLarge, http.StatusRequestEntityTooLarge)
+		jsmHttp.WriteJSONError(w, metrics.CodeRequestTooLarge, http.StatusRequestEntityTooLarge)
 		return
 	}
-	jsmHttp.WriteJSONError(w, metrics.ErrBadRequest, http.StatusBadRequest)
+	jsmHttp.WriteJSONError(w, metrics.CodeBadRequest, http.StatusBadRequest)
 }
 
 // writeServiceError maps a service error onto a status code.
@@ -171,23 +171,23 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 // Anything unrecognised is a 500 with a generic body and the detail in the log,
 // so an internal failure can't describe our schema to a caller.
 func writeServiceError(w http.ResponseWriter, op string, err error) {
-	var invalid service.ErrInvalidInput
+	var invalid metrics.InvalidInputError
 
 	switch {
 	case errors.As(err, &invalid):
 		jsmHttp.WriteJSONError(w, invalid.Reason, http.StatusBadRequest)
-	case errors.Is(err, service.ErrApplicationNotFound):
-		jsmHttp.WriteJSONError(w, metrics.ErrNotFound, http.StatusNotFound)
-	case errors.Is(err, service.ErrIncorrectCredentials):
+	case errors.Is(err, metrics.ErrApplicationNotFound):
+		jsmHttp.WriteJSONError(w, metrics.CodeNotFound, http.StatusNotFound)
+	case errors.Is(err, metrics.ErrIncorrectCredentials):
 		// A wrong *current* password on a change-password request. 401, not
 		// 403: the session is fine, the credential supplied in the body is not.
-		jsmHttp.WriteJSONError(w, metrics.ErrIncorrectCredentials, http.StatusUnauthorized)
-	case errors.Is(err, service.ErrUserNotFound):
+		jsmHttp.WriteJSONError(w, metrics.CodeIncorrectCredentials, http.StatusUnauthorized)
+	case errors.Is(err, metrics.ErrUserNotFound):
 		// A live session naming a user that no longer exists.
-		jsmHttp.WriteJSONError(w, metrics.ErrUnauthorized, http.StatusUnauthorized)
+		jsmHttp.WriteJSONError(w, metrics.CodeUnauthorized, http.StatusUnauthorized)
 	default:
 		logbuilder.NewDefaultInfoLevelLogger().
 			Error("["+op+"]: failed", logbuilder.Fields{"error": err.Error()})
-		jsmHttp.WriteJSONError(w, metrics.ErrInternalServerError, http.StatusInternalServerError)
+		jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 	}
 }

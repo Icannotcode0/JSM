@@ -2,43 +2,55 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
+	"net/mail"
+	"regexp"
+	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	authen "github.com/Icannotcode0/job-app-manager/backend/internal/authentication"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/logbuilder"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/config"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 )
 
-// ErrIncorrectCredentials is returned for both "no such user" and "wrong
+// TODO: A validation layer needs to be implemented and injected into corresponding services
+// This local helper stays here for now, it will be migrated into the validator of this endpoint later
+
+// metrics.ErrIncorrectCredentials is returned for both "no such user" and "wrong
 // password" — never let the caller distinguish which, so a failed login
 // never reveals whether a given email is registered.
-var ErrIncorrectCredentials = errors.New(metrics.ErrIncorrectCredentials)
 
 // Password-policy failures. These are ErrInvalidInput so writeServiceError
 // already maps them to 400 with their own message — a user who typed a weak
 // password needs to be told which rule they missed, not handed a 500.
-var (
-	ErrInSufficientPasswordLength = ErrInvalidInput{Reason: "password must be at least 8 characters"}
-	ErrPasswordTooLong            = ErrInvalidInput{Reason: "password must be at most 72 bytes"}
-	ErrMissingUppercase           = ErrInvalidInput{Reason: "password must contain an uppercase letter"}
-	ErrMissingSpecialCharacters   = ErrInvalidInput{Reason: "password must contain a special character"}
-	ErrIdenticalPasswords         = ErrInvalidInput{Reason: "new password must differ from the current one"}
+
+// domain names cannot start or end from dashes, at least one dot
+var emailDomainPattern = regexp.MustCompile(
+	`^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?` +
+		`(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$`,
 )
 
 type auth struct {
 	store *store.Store
 	sm    *authen.SessionManager
+	mail  config.MailConfig
 }
 
-func NewAuth(store *store.Store, sm *authen.SessionManager) *auth {
+// maxUserName caps the display name. It is rendered in the topbar and reduced
+// to initials, so there is no use for a long one — and without a cap the only
+// limit is the 1 MiB request body.
+const maxUserName = 100
+
+func NewAuth(store *store.Store, sm *authen.SessionManager, mail config.MailConfig) *auth {
 	return &auth{
 		store: store,
 		sm:    sm,
+		mail:  mail,
 	}
 }
 
@@ -57,14 +69,17 @@ func (a *auth) Authenticate(ctx context.Context, email string, password string) 
 		authLogger.Track("Auth.Service")
 	}()
 
-	user, err := a.store.AuthenticateStore.LookupUserByEmail(ctx, email)
+	// Normalised, not validated: a malformed address at login must fail as
+	// ordinary bad credentials, not as a distinguishable validation error that
+	// would tell a prober which addresses are even well-formed.
+	user, err := a.store.AuthenticateStore.LookupUserByEmail(ctx, normalizeEmail(email))
 	if err != nil {
 		// Spend the same time bcrypt would have, so "no such user" and "wrong
 		// password" are indistinguishable by duration as well as by message.
 		// Without this the two paths differ by ~30x, which enumerates accounts.
 		authen.BurnPasswordComparison(password)
 		authLogger.Warn("login failed: user lookup error", logbuilder.Fields{"email": email})
-		return nil, ErrIncorrectCredentials
+		return nil, metrics.ErrIncorrectCredentials
 	}
 
 	if !authen.VerifyPassword(user.PasswordHash, password) {
@@ -72,7 +87,7 @@ func (a *auth) Authenticate(ctx context.Context, email string, password string) 
 			"email": email,
 			"name":  user.Name,
 		})
-		return nil, ErrIncorrectCredentials
+		return nil, metrics.ErrIncorrectCredentials
 	}
 
 	sid, sessionCookie, err := a.sm.CreateSession(ctx, user.ID.Hex(), user.Email, user.Name)
@@ -155,11 +170,11 @@ func (a *auth) ChangePassword(
 		logger.Warn("change password: current password mismatch", logbuilder.Fields{
 			"user_id": userId,
 		})
-		return nil, ErrIncorrectCredentials
+		return nil, metrics.ErrIncorrectCredentials
 	}
 
 	if req.CurrentPassword == req.NewPassword {
-		return nil, ErrIdenticalPasswords
+		return nil, metrics.ErrIdenticalPasswords
 	}
 
 	if err := enforcePasswordComplexity(req.NewPassword); err != nil {
@@ -174,14 +189,6 @@ func (a *auth) ChangePassword(
 		return nil, err
 	}
 
-	// End the session that made this change and force a fresh sign-in with the
-	// new password. Keeping it alive would mean a stolen token still works
-	// after the password rotation, which is most of what rotating it is for.
-	//
-	// DeleteSession takes the *session* ID, not the user ID: the Redis key is
-	// "session:"+sid, and DEL on a key that never existed returns 0 with no
-	// error — so passing the wrong value here fails silently and leaves the
-	// session live until its TTL.
 	sessionCookie := a.sm.ClearSessionCookie()
 	if sessionID != "" {
 		if _, err := a.sm.DeleteSession(ctx, sessionID); err != nil {
@@ -201,8 +208,6 @@ func (a *auth) ChangePassword(
 	return []*http.Cookie{sessionCookie, csrfCookie}, nil
 }
 
-// TODO: A validation layer needs to be implemented and injected into corresponding services
-// This local helper stays here for now, it will be migrated into the validator of this endpoint later
 func enforcePasswordComplexity(password string) error {
 
 	const (
@@ -215,10 +220,10 @@ func enforcePasswordComplexity(password string) error {
 	// bcrypt truncates at 72 *bytes* — 72 runes of CJK is ~216 bytes, and
 	// everything past byte 72 would be silently discarded before hashing.
 	if utf8.RuneCountInString(password) < minPasswordRunes {
-		return ErrInSufficientPasswordLength
+		return metrics.ErrInsufficientPasswordLength
 	}
 	if len(password) > maxPasswordBytes {
-		return ErrPasswordTooLong
+		return metrics.ErrPasswordTooLong
 	}
 
 	seenUpper := false
@@ -240,10 +245,103 @@ func enforcePasswordComplexity(password string) error {
 	}
 
 	if !seenUpper {
-		return ErrMissingUppercase
+		return metrics.ErrMissingUppercase
 	}
 	if !seenSpecial {
-		return ErrMissingSpecialCharacters
+		return metrics.ErrMissingSpecialCharacters
 	}
 	return nil
+}
+
+func (a *auth) CreateUser(ctx context.Context, req domain.SignUpRequest) (domain.User, error) {
+	logger := logbuilder.NewDefaultInfoLevelLogger()
+	defer func() {
+		logger.Track("Service.Authenticate.CreateUser")
+	}()
+
+	userEmail, err := ValidateEmail(req.Email)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	// Same treatment every other stored string gets: trimmed, HTML-escaped, and
+	// capped. The name is rendered in the UI and will be read by the extension
+	// later, so it is sanitised at write time rather than trusted to whichever
+	// consumer remembers to escape it.
+	name := clean(req.Name, maxUserName)
+	if name == "" {
+		return domain.User{}, metrics.Invalid("name is required")
+	}
+
+	if err := enforcePasswordComplexity(req.Password); err != nil {
+		return domain.User{}, err
+	}
+
+	// Hashing belongs here, beside the policy that just validated the password —
+	// not in the store, which has no business seeing plaintext.
+	hash, err := authen.HashPassword(req.Password)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	user := domain.User{
+		Email:        userEmail,
+		Name:         name,
+		PasswordHash: hash,
+	}
+
+	// A local install has no mail transport, so requiring a round-trip the
+	// deployment cannot perform would make every account permanently unusable.
+	// Verification is therefore only withheld where it can actually be granted.
+	if !a.mail.RequireEmailVerification {
+		now := time.Now().UTC()
+		user.EmailVerified = true
+		user.EmailVerifiedAt = &now
+	}
+
+	created, err := a.store.AuthenticateStore.CreateUser(ctx, user)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return created, nil
+}
+
+// normalizeEmail folds an address to the single form the database stores.
+//
+// Both signup and login must use it. Normalising on write alone is worse than
+// not normalising at all, the account is stored as fix@example.com, the login
+// looks up FIX@Example.com, no row matches, and the user is told their password
+// is wrong for an account they just created.
+func normalizeEmail(input string) string {
+	return strings.ToLower(strings.TrimSpace(input))
+}
+
+func ValidateEmail(input string) (string, error) {
+	email := strings.TrimSpace(input)
+	if email == "" || len(email) > 254 {
+		return "", metrics.ErrInvalidEmail
+	}
+
+	// reject non-ASCII characters, internal spaces, quote signs and ctrl signs
+	for _, c := range email {
+		if c <= ' ' || c >= 127 || c == '"' {
+			return "", metrics.ErrInvalidEmail
+		}
+	}
+
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Name != "" || addr.Address != email {
+		return "", metrics.ErrInvalidEmail
+	}
+
+	local, domainName, ok := strings.Cut(email, "@")
+	if !ok || len(local) > 64 || !emailDomainPattern.MatchString(domainName) {
+		return "", metrics.ErrInvalidEmail
+	}
+
+	// Fold the whole address, not just the domain. RFC 5321 makes the local
+	// part case-sensitive, but no mainstream provider treats it that way, and
+	// the unique index on users.email compares bytes.
+	_ = local
+	return normalizeEmail(email), nil
 }
