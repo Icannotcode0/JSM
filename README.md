@@ -59,6 +59,7 @@ CSRFMiddleWare       safe methods    issue jsm_csrf, pass through
 root mux
   |
   +--> GET  /health            public
+  +--> POST /signup            public
   +--> POST /login             public
   +--> POST /logout            public
   |
@@ -116,54 +117,42 @@ cd frontend && npm install && npm run dev
 
 ### Creating an account
 
-`POST /signup` isn't built yet, so seed a user directly:
+Open `http://localhost:5173/signup` and fill in the form. You'll be sent to the
+sign-in page afterwards — creating an account doesn't sign you in, because
+that's the path that has to keep working once email verification stands between
+the two.
+
+The password must be at least 8 characters and at most 72 bytes, with one
+uppercase letter and one special character. The 72-byte cap is bcrypt's: it
+truncates there, so anything longer would be silently ignored rather than hashed.
+
+Addresses are folded to lowercase, so `You@Example.com` and `you@example.com`
+are the same account — signing up as one and signing in as the other works.
+
+On a local install the account is usable immediately. Set
+`REQUIRE_EMAIL_VERIFICATION=true` and new accounts are created unverified
+instead, pending the verification flow.
+
+<details>
+<summary>Creating one over HTTP instead</summary>
+
+Every mutating request needs a CSRF token, and the server only issues one in
+response to a safe request — so fetch one first, then send it back in the
+header. This is the same two-step the frontend performs.
 
 ```bash
-cd backend
-cat > /tmp/seed.go <<'EOF'
-package main
+curl -s -c jar.txt http://127.0.0.1:8080/health > /dev/null
+TOKEN=$(awk '$6=="jsm_csrf"{print $7}' jar.txt)
 
-import (
-      "context"
-      "fmt"
-      "time"
+curl -s -b jar.txt -X POST http://127.0.0.1:8080/signup \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-TOKEN: $TOKEN" \
+  -d '{"email":"you@example.com","password":"ChangeMe1!","name":"Your Name"}'
 
-      "go.mongodb.org/mongo-driver/v2/bson"
-      "go.mongodb.org/mongo-driver/v2/mongo"
-      "go.mongodb.org/mongo-driver/v2/mongo/options"
-      "golang.org/x/crypto/bcrypt"
-)
-
-func main() {
-      ctx := context.Background()
-      c, err := mongo.Connect(options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
-      if err != nil {
-              panic(err)
-      }
-      defer c.Disconnect(ctx)
-
-      hash, err := bcrypt.GenerateFromPassword([]byte("change-this-password"), bcrypt.DefaultCost)
-      if err != nil {
-              panic(err)
-      }
-
-      res, err := c.Database("jobtracker").Collection("users").InsertOne(ctx, bson.M{
-              "email":         "you@example.com",
-              "password_hash": string(hash),
-              "name":          "Your Name",
-              "created_at":    time.Now(),
-              "updated_at":    time.Now(),
-      })
-      if err != nil {
-              panic(err)
-      }
-      fmt.Println("created user:", res.InsertedID)
-}
-EOF
-go run /tmp/seed.go && rm /tmp/seed.go
+rm jar.txt
 ```
 
-Then sign in at `http://localhost:5173/login`.
+</details>
 
 ---
 
@@ -174,6 +163,7 @@ Base URL `http://127.0.0.1:8080`. Full reference in [`API.md`](API.md).
 | Method | Path | Auth | Status |
 |---|---|---|---|
 | `GET` | `/health` | — | ✅ |
+| `POST` | `/signup` | CSRF | ✅ |
 | `POST` | `/login` | CSRF | ✅ |
 | `POST` | `/logout` | CSRF | ✅ |
 | `GET` | `/me` | session | ✅ |
@@ -183,7 +173,6 @@ Base URL `http://127.0.0.1:8080`. Full reference in [`API.md`](API.md).
 | `GET` | `/applications/{id}` | session | ✅ |
 | `PATCH` | `/applications/{id}` | session + CSRF | ✅ |
 | `DELETE` | `/applications/{id}` | session + CSRF | ✅ |
-| `POST` | `/signup` | CSRF | 📝 planned |
 | `POST` | `/applications/{id}/resumes` | session + CSRF | 📝 planned |
 | `GET` | `/applications/{id}/resumes/{resumeId}` | session | 📝 planned |
 | `POST` | `/api/extension/applications` | session + CSRF + origin | 📝 planned |
@@ -321,9 +310,10 @@ tests actually ran rather than trusting a green summary.
 - [x] Auth: sessions, CSRF, login/logout
 - [x] Applications: full CRUD, filter, search, pagination
 - [x] Dashboard: pipeline board, stats, inline editor
+- [x] Sign-up, with email validation and a shared password policy
 - [x] Change password, with session invalidation
 - [x] Test suite and CI on every pull request
-- [ ] `POST /signup`
+- [ ] Email verification (`Mailer` seam and config flag are in place)
 - [ ] Resume uploads (Milestone 8)
 - [ ] Browser extension auto-capture (Milestone 14)
 - [ ] Rate limiting on auth endpoints

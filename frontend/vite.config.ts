@@ -11,6 +11,7 @@ const BACKEND = "http://127.0.0.1:8080";
 function cleanUrls(): Plugin {
   const routes: Record<string, string> = {
     "/login": "/login.html",
+    "/signup": "/signup.html",
     "/dashboard": "/dashboard.html",
   };
   return {
@@ -52,7 +53,7 @@ export default defineConfig({
     // with the HTML shell, so every filtered or paged request silently returns
     // a page instead of JSON.
     proxy: {
-      "^/(health|signup|logout|me|reset-password|applications)(/|\\?|$)": {
+      "^/(health|logout|me|reset-password|applications)(/|\\?|$)": {
         target: BACKEND,
         changeOrigin: false,
       },
@@ -65,10 +66,23 @@ export default defineConfig({
       // dispatches on method. In practice cleanUrls above already claims the
       // GET, so this bypass is the backstop that keeps the page reachable if
       // that middleware's ordering ever changes.
+      // /login and /signup are the two genuine collisions: GET is the page,
+      // POST is the API. In production the Go server owns both and dispatches
+      // on method. cleanUrls above already claims the GET, so these bypasses
+      // are the backstop if that middleware's ordering ever changes.
+      //
+      // Note they are listed separately rather than folded into the block
+      // above: a path in that list proxies *every* method, which would send
+      // GET /signup to the backend and never serve the page at all.
       "^/login(\\?|$)": {
         target: BACKEND,
         changeOrigin: false,
         bypass: (req) => (req.method === "GET" ? "/login.html" : undefined),
+      },
+      "^/signup(\\?|$)": {
+        target: BACKEND,
+        changeOrigin: false,
+        bypass: (req) => (req.method === "GET" ? "/signup.html" : undefined),
       },
     },
   },
@@ -77,6 +91,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         login: resolve(__dirname, "login.html"),
+        signup: resolve(__dirname, "signup.html"),
         dashboard: resolve(__dirname, "dashboard.html"),
       },
     },
