@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,7 +59,7 @@ func newUserStore(t *testing.T) *userStore {
 	_, err := db.Collection(metrics.DbuserCollection).Indexes().CreateOne(
 		context.Background(),
 		mongo.IndexModel{
-			Keys:    bson.D{{Key: "email", Value: 1}},
+			Keys:    bson.D{{Key: "email_normalized", Value: 1}},
 			Options: options.Index().SetUnique(true),
 		},
 	)
@@ -71,11 +72,14 @@ func newUserStore(t *testing.T) *userStore {
 // newUser builds what the service hands down: already validated, already
 // hashed. The store does no hashing of its own, so a literal stands in for a
 // real bcrypt value here.
+// newUser builds what the service hands down: validated, hashed, and carrying
+// both address forms.
 func newUser(email string) domain.User {
 	return domain.User{
-		Email:        email,
-		Name:         "Ada Lovelace",
-		PasswordHash: "$2a$10$notarealhashbutshapedlikeoneforthistest",
+		Email:           email,
+		EmailNormalized: strings.ToLower(email),
+		Name:            "Ada Lovelace",
+		PasswordHash:    "$2a$10$notarealhashbutshapedlikeoneforthistest",
 	}
 }
 
@@ -119,7 +123,7 @@ func TestCreateUserStoresTheGivenHashUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	found, err := s.LookupUserByEmail(ctx, in.Email)
+	found, err := s.LookupUserByEmail(ctx, in.EmailNormalized)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,21 +149,31 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 	}
 }
 
-// The index compares bytes, so whether two spellings collide is decided by the
-// normalisation the service applies before calling this. The service now folds
-// the whole address, which is what makes these collide.
-func TestCreateUserCollidesOnAlreadyNormalisedAddresses(t *testing.T) {
+// The point of the split: two spellings of one address collide on the unique
+// index, while each document keeps the casing its owner typed.
+func TestCreateUserCollidesAcrossCasingButKeepsTheTypedForm(t *testing.T) {
 	s := newUserStore(t)
 	ctx := context.Background()
 
-	if _, err := s.CreateUser(ctx, newUser("ada@example.com")); err != nil {
+	created, err := s.CreateUser(ctx, newUser("Ada@Example.com"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	// Reaching the store un-normalised is a service bug, but the index still
-	// treats it as a different address — which is exactly why normalisation
-	// has to happen above this layer.
-	if _, err := s.CreateUser(ctx, newUser("Ada@example.com")); err != nil {
-		t.Fatalf("got %v — the index began folding case, which it does not do", err)
+	if created.Email != "Ada@Example.com" {
+		t.Errorf("Email = %q, want the typed casing preserved", created.Email)
+	}
+
+	if _, err := s.CreateUser(ctx, newUser("ADA@EXAMPLE.COM")); !errors.Is(err, metrics.ErrEmailTaken) {
+		t.Fatalf("got %v, want ErrEmailTaken — the index is not folding case", err)
+	}
+
+	// And the original is still reachable by the folded form.
+	found, err := s.LookupUserByEmail(ctx, "ada@example.com")
+	if err != nil {
+		t.Fatalf("lookup by the normalised form failed: %v", err)
+	}
+	if found.ID != created.ID {
+		t.Error("the lookup found a different document")
 	}
 }
 

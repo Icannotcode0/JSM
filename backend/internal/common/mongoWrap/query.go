@@ -15,7 +15,7 @@ import (
 // Sentinel errors live in internal/common/metrics so the store and the service
 // share one value — errors.Is then works from the Mongo call to the handler
 // with no translation step in between.
-var FEmailAddress = "email"
+var FEmailAddress = "email_normalized"
 
 // FindUserByID looks up a user by their Mongo _id (as a hex string).
 func FindUserByID(ctx context.Context, collection *mongo.Collection, id string) (domain.User, error) {
@@ -34,9 +34,14 @@ func FindUserByID(ctx context.Context, collection *mongo.Collection, id string) 
 	return user, nil
 }
 
-func FindUserByEmail(ctx context.Context, collection *mongo.Collection, email string) (domain.User, error) {
+// FindUserByEmail matches on email_normalized, never on email.
+//
+// The caller passes an already-normalized address (service.normalizeEmail).
+// Querying the typed field instead would make Ada@x.com and ada@x.com different
+// accounts, which is the whole reason the normalized field exists.
+func FindUserByEmail(ctx context.Context, collection *mongo.Collection, normalizedEmail string) (domain.User, error) {
 	var user domain.User
-	emailFilter := bson.D{{Key: "email", Value: email}}
+	emailFilter := bson.D{{Key: "email_normalized", Value: normalizedEmail}}
 	if err := collection.FindOne(ctx, emailFilter).Decode(&user); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return domain.User{}, metrics.ErrUserNotFound
@@ -71,6 +76,15 @@ func EditUserPassword(ctx context.Context, collection *mongo.Collection, userId 
 
 // CreateUser inserts a new user, stamping ID/CreatedAt/UpdatedAt.
 func CreateUser(ctx context.Context, collection *mongo.Collection, user domain.User) (domain.User, error) {
+	// Refuse rather than store a document the unique index will misbehave on.
+	// An empty email_normalized is not "no constraint" — it is a value, so two
+	// such documents collide with each other while genuinely distinct addresses
+	// slip past. Deriving it here instead would put normalisation in two places
+	// and let them drift; the service owns that decision.
+	if user.EmailNormalized == "" {
+		return domain.User{}, fmt.Errorf("create user: EmailNormalized must be set")
+	}
+
 	now := time.Now().UTC()
 	user.ID = bson.NewObjectID()
 	user.CreatedAt = now

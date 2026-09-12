@@ -15,9 +15,11 @@ import (
 )
 
 var (
-	// Unique: one account per email address. This is the only unique index in
-	// the schema.
-	userCollectionIndex = bson.D{{Key: "email", Value: 1}}
+	// Unique: one account per address, compared case-insensitively. The
+	// constraint is on the normalized form, not the typed one — users.email
+	// preserves whatever casing the user entered and is deliberately
+	// unconstrained. This is the only unique index in the schema.
+	userCollectionIndex = bson.D{{Key: "email_normalized", Value: 1}}
 
 	// Base filter for every application query — every list/get/patch/delete
 	// goes through user_id (see DATABASE.md, "Multi-tenancy").
@@ -93,6 +95,11 @@ func (m *MongoClient) EnsureIndexes(ctx context.Context) error {
 		return err
 	}
 
+	users := m.DB.Collection(m.UsersCollection)
+	if err := migrateUserEmailNormalized(ctx, users); err != nil {
+		return err
+	}
+
 	specs := []struct {
 		collection *mongo.Collection
 		model      mongo.IndexModel
@@ -118,6 +125,73 @@ func (m *MongoClient) EnsureIndexes(ctx context.Context) error {
 
 	return nil
 }
+
+// migrateUserEmailNormalized backfills email_normalized on accounts created
+// before the field existed, then drops the unique index that used to sit on
+// users.email.
+//
+// Order matters. Backfill first: creating the new unique index on a collection
+// where every document has a missing email_normalized would see them all as the
+// same null value and reject every document after the first. Drop second, so a
+// crash between the two leaves the old constraint protecting the collection
+// rather than nothing at all.
+func migrateUserEmailNormalized(ctx context.Context, users *mongo.Collection) error {
+	cursor, err := users.Find(ctx, bson.M{"email_normalized": bson.M{"$exists": false}})
+	if err != nil {
+		return fmt.Errorf("find users needing email_normalized: %w", err)
+	}
+
+	var legacy []struct {
+		ID    bson.ObjectID `bson:"_id"`
+		Email string        `bson:"email"`
+	}
+	if err := cursor.All(ctx, &legacy); err != nil {
+		return fmt.Errorf("read users needing email_normalized: %w", err)
+	}
+
+	for _, u := range legacy {
+		_, err := users.UpdateByID(ctx, u.ID, bson.M{
+			"$set": bson.M{"email_normalized": strings.ToLower(strings.TrimSpace(u.Email))},
+		})
+		if err != nil {
+			return fmt.Errorf("backfill email_normalized for %s: %w", u.ID.Hex(), err)
+		}
+	}
+	if len(legacy) > 0 {
+		log.Printf("mongoWrap: backfilled email_normalized on %d user(s)", len(legacy))
+	}
+
+	return dropIndexIfPresent(ctx, users, legacyUniqueEmailIndex)
+}
+
+// dropIndexIfPresent removes an index by name, tolerating its absence.
+func dropIndexIfPresent(ctx context.Context, col *mongo.Collection, name string) error {
+	cursor, err := col.Indexes().List(ctx)
+	if err != nil {
+		return fmt.Errorf("list %s indexes: %w", col.Name(), err)
+	}
+	var existing []struct {
+		Name string `bson:"name"`
+	}
+	if err := cursor.All(ctx, &existing); err != nil {
+		return fmt.Errorf("read %s indexes: %w", col.Name(), err)
+	}
+
+	for _, idx := range existing {
+		if idx.Name != name {
+			continue
+		}
+		if err := col.Indexes().DropOne(ctx, name); err != nil {
+			return fmt.Errorf("drop index %s: %w", name, err)
+		}
+		log.Printf("mongoWrap: dropped superseded index %q on %s", name, col.Name())
+	}
+	return nil
+}
+
+// legacyUniqueEmailIndex is the name Mongo generated for the unique index that
+// used to sit on users.email, before matching moved to email_normalized.
+const legacyUniqueEmailIndex = "email_1"
 
 // legacyUniqueAppIndex is the name Mongo generated for the incorrect unique
 // index on {user_id, status}.

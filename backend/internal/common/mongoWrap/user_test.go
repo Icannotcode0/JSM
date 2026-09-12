@@ -2,6 +2,8 @@ package mongoWrap
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,9 +17,10 @@ import (
 func seedUser(t *testing.T, col *mongo.Collection, email string) domain.User {
 	t.Helper()
 	user, err := CreateUser(context.Background(), col, domain.User{
-		Email:        email,
-		Name:         "Test User",
-		PasswordHash: "$2a$10$originalhashoriginalhashoriginalhashoriginalhashoriginalha",
+		Email:           email,
+		EmailNormalized: strings.ToLower(email),
+		Name:            "Test User",
+		PasswordHash:    "$2a$10$originalhashoriginalhashoriginalhashoriginalhashoriginalha",
 	})
 	if err != nil {
 		t.Fatalf("seed %s: %v", email, err)
@@ -132,15 +135,38 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 	// The uniqueness guarantee is the index, not application logic — so the
 	// test has to create it, exactly as EnsureIndexes does at startup.
 	if _, err := col.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "email", Value: 1}},
+		Keys:    bson.D{{Key: "email_normalized", Value: 1}},
 		Options: newUniqueIndexOptions(),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	seedUser(t, col, "dupe@example.com")
-	if _, err := CreateUser(ctx, col, domain.User{Email: "dupe@example.com", Name: "Impostor"}); err != metrics.ErrEmailTaken {
+
+	// A different typed casing, the same normalised form — the index collides
+	// them, which is the entire point of the split.
+	_, err := CreateUser(ctx, col, domain.User{
+		Email:           "Dupe@Example.com",
+		EmailNormalized: "dupe@example.com",
+		Name:            "Impostor",
+	})
+	if !errors.Is(err, metrics.ErrEmailTaken) {
 		t.Errorf("got %v, want metrics.ErrEmailTaken", err)
+	}
+}
+
+// An unset EmailNormalized is rejected rather than stored: it is a value, not
+// an absence, so several such documents would collide with each other while
+// genuinely distinct addresses slipped through.
+func TestCreateUserRequiresNormalizedEmail(t *testing.T) {
+	col := testDB(t).Collection("users")
+
+	_, err := CreateUser(context.Background(), col, domain.User{
+		Email: "ada@example.com",
+		Name:  "Ada",
+	})
+	if err == nil {
+		t.Fatal("a user with no EmailNormalized was stored")
 	}
 }
 
