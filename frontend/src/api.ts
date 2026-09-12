@@ -90,6 +90,7 @@ const ERROR_COPY: Record<string, string> = {
   NOT_FOUND: "That application no longer exists.",
   EMAIL_ALREADY_REGISTERED: "An account with that email already exists.",
   UNAUTHORIZED: "Please sign in again.",
+  TOO_MANY_REQUESTS: "Too many attempts. Please wait a moment and try again.",
   unauthorized: "Please sign in again.",
   "csrf token missing": "Your session expired. Reload the page and try again.",
   "csrf token mismatch": "Your session expired. Reload the page and try again.",
@@ -103,7 +104,31 @@ async function toApiError(res: Response): Promise<ApiError> {
   } catch {
     // Non-JSON body (a proxy error page, say) — fall through to the status.
   }
+
+  // A 429 carries Retry-After. Folding it into the message turns "try again
+  // later" into something the user can actually act on, and the server
+  // deliberately says nothing else about why they were throttled.
+  if (res.status === 429) {
+    const seconds = Number(res.headers.get("Retry-After"));
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return new ApiError(`Too many attempts. Try again in ${formatWait(seconds)}.`, 429);
+    }
+  }
+
   return new ApiError(ERROR_COPY[code] || code || `Request failed (${res.status}).`, res.status);
+}
+
+/** "45 seconds", "5 minutes", "1 hour" — whole units, because a live countdown
+ *  would imply more precision than a fixed-window limiter actually offers.
+ *
+ *  Hours matter: the sustained rules run for an hour, so a tripped one yields
+ *  values up to 3600 and "60 minutes" reads worse than "1 hour". */
+function formatWait(seconds: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+  if (seconds < 60) return plural(Math.ceil(seconds), "second");
+  if (seconds < 3600) return plural(Math.ceil(seconds / 60), "minute");
+  return plural(Math.ceil(seconds / 3600), "hour");
 }
 
 /* -------------------------------------------------------------------------
@@ -146,6 +171,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     // A 403 on a mutating call is a CSRF rejection, not a permissions failure.
     // Retry once with a freshly minted token, which recovers from a stale
     // binding or a restarted server. A second 403 is a real error.
+    //
+    // Note this deliberately does not retry a 429: the whole point of being
+    // throttled is that retrying immediately is what got you here.
     if (needsToken && res.status === 403) {
       res = await send(await ensureCsrfToken(true));
     }
