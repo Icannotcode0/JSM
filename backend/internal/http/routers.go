@@ -6,6 +6,7 @@ import (
 	"github.com/Icannotcode0/job-app-manager/backend/internal/authentication"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/http/handlers"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/http/middleware"
+	ratelimit "github.com/Icannotcode0/job-app-manager/backend/internal/rate-limiter"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/service"
 )
 
@@ -21,9 +22,13 @@ import (
 // no compile error and no startup error; the endpoint just quietly serves the
 // user's job search to anyone who asks. Here, forgetting to make something
 // public produces a 401 you notice on the first request.
-func NewRouter(sm *authentication.SessionManager, services *service.Services) http.Handler {
+func NewRouter(
+	sm *authentication.SessionManager,
+	services *service.Services,
+	guard ratelimit.Guard,
+) http.Handler {
 	healthHandler := handlers.NewHealthHandler(services.Health)
-	authHandler := handlers.NewAuth(services.Auth, sm)
+	authHandler := handlers.NewAuth(services.Auth, sm, guard)
 	userHandler := handlers.NewUserHandler(services.Users)
 	applicationHandler := handlers.NewApplicationHandler(services.Applications)
 

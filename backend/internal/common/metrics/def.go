@@ -43,6 +43,7 @@ const (
 	CodeIdenticalCredentials = "IDENTICAL_CREDENTIALS"
 	CodeInvalidEmail         = "INVALID_EMAIL_ADDRESS"
 	CodeEmailAlreadyTaken    = "EMAIL_ALREADY_REGISTERED"
+	CodeTooManyRequests      = "TOO_MANY_REQUESTS"
 )
 
 // ---------------------------------------------------------------------------

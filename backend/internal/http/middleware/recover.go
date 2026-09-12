@@ -7,6 +7,7 @@ import (
 
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/jsmHttp"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/logbuilder"
+	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 )
 
 // RecoverMiddleware catches a panic anywhere downstream in the handler
@@ -41,7 +42,7 @@ func RecoverMiddleware() func(http.Handler) http.Handler {
 					}
 					// Stack trace and panic value stay server-side only —
 					// the client gets a generic message, never internals.
-					jsmHttp.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
+					jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 				}
 			}()
 			next.ServeHTTP(w, r)

@@ -21,14 +21,35 @@ cookie before it can POST to them.
 - Success: `{"<resource>": {...}}` or `{"<resource>s": [...]}` for lists.
 - Error: `{"error": "<message>"}`.
 
+**Rate limiting:** `POST /signup`, `POST /login`, and `POST /reset-password` are
+throttled and may answer `429`. Every other route is unlimited — including
+`GET /health`, deliberately, because it is how a client obtains its CSRF token
+and throttling it would break sign-in for whoever retries most.
+
+```
+429 Too Many Requests
+Retry-After: 41
+{"error": "TOO_MANY_REQUESTS"}
+```
+
+`Retry-After` is the whole seconds until the exhausted budget refills; honour it
+rather than retrying blind. The body is **identical regardless of which limit was
+hit** — naming the rule would confirm that an account exists at a given address,
+so it deliberately says nothing beyond "too many".
+
+Login is limited both per client address and per email address; signup per client
+address; reset-password per user. A successful login clears its counters, so
+mistyping a password a few times before getting it right costs nothing.
+
 **Common errors** that can occur on *any* route below, not repeated per-endpoint:
 
 | Status | Body | Cause |
 |---|---|---|
 | 403 | `{"error": "csrf token missing"}` | No CSRF cookie present on a mutating request |
 | 403 | `{"error": "csrf token mismatch"}` | `X-CSRF-TOKEN` header doesn't match the cookie |
+| 403 | `{"error": "csrf token invalid"}` | Token wasn't signed by this server, or isn't bound to the session presenting it |
 | 401 | `{"error": "unauthorized"}` | Missing/invalid/expired session on a route requiring one |
-| 500 | `{"error": "internal server error"}` | Unhandled failure (DB down, etc.) |
+| 500 | `{"error": "INTERNAL_SERVER_ERROR"}` | Unhandled failure (DB down, etc.) |
 
 ---
 
@@ -63,6 +84,7 @@ Auth: CSRF only.
 |---|---|---|
 | 400 | `{"error": "invalid request"}` | Malformed JSON, missing fields, or password under 8 chars |
 | 409 | `{"error": "email already registered"}` | Email already exists (unique index on `email`) |
+| 429 | `{"error": "TOO_MANY_REQUESTS"}` | Too many signups from this client address — see Rate limiting above |
 
 ---
 
@@ -91,6 +113,7 @@ response reissues one bound to it.
 |---|---|---|
 | 400 | `{"error": "invalid request"}` | Malformed JSON / missing fields |
 | 401 | `{"error": "invalid email or password"}` | Wrong email or password — deliberately identical message for both, to avoid confirming which emails are registered |
+| 429 | `{"error": "TOO_MANY_REQUESTS"}` | Too many attempts from this client address, or against this email — see Rate limiting above |
 
 ---
 
@@ -152,6 +175,7 @@ symbol — so `!` and `$` both count). The byte cap is bcrypt's: it truncates at
 | 401 | `{"error": "INCORRECT_CREDENTIALS"}` | `current_password` is wrong |
 | 401 | `{"error": "UNAUTHORIZED"}` | Session names a user that no longer exists |
 | 413 | `{"error": "REQUEST_TOO_LARGE"}` | Body exceeds the 1 MiB cap |
+| 429 | `{"error": "TOO_MANY_REQUESTS"}` | Too many attempts for this user — see Rate limiting above |
 
 ---
 

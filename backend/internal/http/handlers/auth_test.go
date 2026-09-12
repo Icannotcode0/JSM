@@ -13,6 +13,7 @@ import (
 	jsmHttp "github.com/Icannotcode0/job-app-manager/backend/internal/common/jsmHttp"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
+	ratelimit "github.com/Icannotcode0/job-app-manager/backend/internal/rate-limiter"
 )
 
 /* ---------- fakes --------------------------------------------------------- */
@@ -54,6 +55,16 @@ type fakeSessions struct{ sid string }
 
 func (f fakeSessions) SessionIDFromRequest(_ *http.Request) string { return f.sid }
 
+// noLimit is a guard with an empty policy: every request is allowed. These
+// tests are about the handler's behaviour, not about throttling — the limiter
+// has its own suite.
+func noLimit() ratelimit.Guard {
+	return ratelimit.NewGuard(
+		ratelimit.NewMemoryLimiter(ratelimit.WithPolicy(ratelimit.Policy{})),
+		ratelimit.NewClientIPResolver(ratelimit.ProxyConfig{}),
+	)
+}
+
 func newResetRequest(body string, userID string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/reset-password", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
@@ -82,7 +93,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
 // 401 from requireUser and then a 400 on top of it.
 func TestResetPasswordUnauthenticatedWritesSingle401(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, newResetRequest(`{"current_password":"a","new_password":"B1!aaaaa"}`, ""))
@@ -101,7 +112,7 @@ func TestResetPasswordUnauthenticatedWritesSingle401(t *testing.T) {
 
 func TestResetPasswordMalformedBody(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{sid: "sid"})
+	h := NewAuth(svc, fakeSessions{sid: "sid"}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, newResetRequest(`{nope`, "uid-1"))
@@ -116,7 +127,7 @@ func TestResetPasswordMalformedBody(t *testing.T) {
 
 func TestResetPasswordOversizedBody(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{sid: "sid"})
+	h := NewAuth(svc, fakeSessions{sid: "sid"}, noLimit())
 
 	huge := `{"current_password":"a","new_password":"` + strings.Repeat("x", jsmHttp.MaxBodyBytes+100) + `"}`
 	rec := httptest.NewRecorder()
@@ -132,7 +143,7 @@ func TestResetPasswordOversizedBody(t *testing.T) {
 // an earlier version passed the user ID, which silently deleted nothing.
 func TestResetPasswordForwardsSessionAndUser(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{sid: "session-xyz"})
+	h := NewAuth(svc, fakeSessions{sid: "session-xyz"}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, newResetRequest(
@@ -157,7 +168,7 @@ func TestResetPasswordSuccessSetsCookiesAndBody(t *testing.T) {
 		{Name: "jsm_session", Value: "", MaxAge: -1},
 		{Name: "jsm_csrf", Value: "nonce!.sig"},
 	}}
-	h := NewAuth(svc, fakeSessions{sid: "sid"})
+	h := NewAuth(svc, fakeSessions{sid: "sid"}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, newResetRequest(
@@ -197,7 +208,7 @@ func TestResetPasswordErrorMapping(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewAuth(&fakeAuthService{err: tc.err}, fakeSessions{sid: "sid"})
+			h := NewAuth(&fakeAuthService{err: tc.err}, fakeSessions{sid: "sid"}, noLimit())
 			rec := httptest.NewRecorder()
 			h.ResetPassword(rec, newResetRequest(
 				`{"current_password":"Old1!aaa","new_password":"New1!aaa"}`, "uid"))
@@ -216,7 +227,7 @@ func TestResetPasswordErrorMapping(t *testing.T) {
 func TestResetPasswordDoesNotLeakInternalErrors(t *testing.T) {
 	h := NewAuth(&fakeAuthService{
 		err: errors.New("mongo: collection jobtracker.users index _id_ failed"),
-	}, fakeSessions{sid: "sid"})
+	}, fakeSessions{sid: "sid"}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, newResetRequest(
