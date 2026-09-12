@@ -38,6 +38,7 @@ function setBusy(busy: boolean): void {
 const NOTICES: Record<string, string> = {
   "password-changed": "Password changed. Sign in with your new password.",
   "account-created": "Account created. Sign in to get started.",
+  "session-expired": "Your session expired. Sign in again to continue.",
 };
 
 const params = new URLSearchParams(window.location.search);
