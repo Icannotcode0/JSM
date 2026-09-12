@@ -619,7 +619,11 @@ passwordForm.addEventListener("submit", async (e) => {
 
 document.querySelector<HTMLButtonElement>("#logout-btn")!.addEventListener("click", async () => {
   await logout();
-  window.location.href = "/login";
+  // The landing page, not the login form. Signing out is a deliberate "I'm
+  // done" — answering it with a login form assumes the opposite. The two
+  // redirects that *do* go to /login are the ones where the user hasn't asked
+  // to leave and has to get back in: a password change and a new account.
+  window.location.href = "/";
 });
 
 let searchDebounce = 0;
@@ -669,7 +673,10 @@ async function init(): Promise<void> {
   // "am I signed in?" — hence the guard is here rather than at module load.
   const user = await getMe();
   if (!user) {
-    window.location.href = "/login";
+    // An expired or missing session, not a deliberate exit — the user was
+    // trying to reach the dashboard, so send them where they can get back to
+    // it rather than to the marketing page.
+    window.location.href = "/login?session-expired=1";
     return;
   }
   showUser(user);

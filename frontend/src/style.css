@@ -889,6 +889,38 @@ html.js .line-mask.is-revealed > span {
   box-shadow: 0 0 0 4px var(--accent-ring);
 }
 
+/* Chrome paints autofilled fields with its own pale blue, which is the only
+   off-palette element on an otherwise warm-paper page. The background itself
+   can't be overridden — it's painted by the UA below the normal background
+   layer — but an inset box-shadow covers it, and -webkit-text-fill-color wins
+   over `color` for the text on top.
+   
+   The long transition-delay is the standard trick for the flash on paint:
+   Chrome applies its background before the shadow lands, so deferring the
+   transition keeps the shadow in place rather than letting it animate away. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+  transition: background-color 600000s 0s, color 600000s 0s;
+  caret-color: var(--ink);
+}
+
+/* Focus ring has to be reasserted: the inset shadow above replaces the one the
+   focus rule sets, so an autofilled field would otherwise lose its ring. */
+input:-webkit-autofill:focus {
+  -webkit-box-shadow:
+    0 0 0 1000px var(--surface) inset,
+    0 0 0 4px var(--accent-ring);
+  box-shadow:
+    0 0 0 1000px var(--surface) inset,
+    0 0 0 4px var(--accent-ring);
+}
+
 .form-error {
   margin: 0;
   padding: 10px 12px;
