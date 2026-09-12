@@ -285,9 +285,12 @@ func (a *auth) CreateUser(ctx context.Context, req domain.SignUpRequest) (domain
 	}
 
 	user := domain.User{
-		Email:        userEmail,
-		Name:         name,
-		PasswordHash: hash,
+		// Both forms: the typed one to show and to send mail to, the folded
+		// one to match on.
+		Email:           userEmail,
+		EmailNormalized: normalizeEmail(userEmail),
+		Name:            name,
+		PasswordHash:    hash,
 	}
 
 	// A local install has no mail transport, so requiring a round-trip the
@@ -339,9 +342,9 @@ func ValidateEmail(input string) (string, error) {
 		return "", metrics.ErrInvalidEmail
 	}
 
-	// Fold the whole address, not just the domain. RFC 5321 makes the local
-	// part case-sensitive, but no mainstream provider treats it that way, and
-	// the unique index on users.email compares bytes.
+	// Returned as typed, case intact. RFC 5321 makes the local part
+	// case-sensitive, so this is the form to display and to send mail to;
+	// normalizeEmail produces the separate form used for matching.
 	_ = local
-	return normalizeEmail(email), nil
+	return email, nil
 }

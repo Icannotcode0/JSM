@@ -85,41 +85,36 @@ func TestValidateEmailRejectsDisplayNameEvenThoughItParses(t *testing.T) {
 	}
 }
 
-func TestValidateEmailLowercasesDomain(t *testing.T) {
-	got, err := ValidateEmail("ada@EXAMPLE.COM")
+// ValidateEmail returns the address as typed. Folding is normalizeEmail's job,
+// and the two are deliberately separate: one form is displayed and mailed to,
+// the other is matched on.
+func TestValidateEmailPreservesTypedCase(t *testing.T) {
+	got, err := ValidateEmail("Ada.Lovelace@EXAMPLE.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "ada@example.com" {
-		t.Errorf("got %q, want the domain lowercased", got)
+	if got != "Ada.Lovelace@EXAMPLE.com" {
+		t.Errorf("got %q, want the address exactly as typed", got)
 	}
 }
 
-// The whole address is folded, local part included. RFC 5321 makes the local
-// part case-sensitive, but the unique index compares bytes: preserving case
-// there would let Ada@x.com and ada@x.com become two accounts, and whoever
-// signed up as one and logged in as the other would be told their credentials
-// were wrong with no way to discover why.
-func TestValidateEmailFoldsTheWholeAddress(t *testing.T) {
+func TestNormalizeEmailFoldsEverything(t *testing.T) {
 	for _, in := range []string{
 		"Ada.Lovelace@Example.com",
 		"ADA.LOVELACE@EXAMPLE.COM",
-		"ada.lovelace@example.com",
+		"  ada.lovelace@example.com  ",
 	} {
-		got, err := ValidateEmail(in)
-		if err != nil {
-			t.Fatalf("%q: %v", in, err)
-		}
-		if got != "ada.lovelace@example.com" {
-			t.Errorf("%q normalised to %q, want a single canonical form", in, got)
+		if got := normalizeEmail(in); got != "ada.lovelace@example.com" {
+			t.Errorf("%q normalised to %q, want one canonical form", in, got)
 		}
 	}
 }
 
-// The point of folding: every spelling must reach the store as the same string,
-// or the unique index cannot collide them.
-func TestCreateUserSendsOneCanonicalAddressRegardlessOfCasing(t *testing.T) {
-	seen := map[string]bool{}
+// Every spelling must reach the store with the same EmailNormalized — that is
+// what the unique index collides on — while Email keeps whatever was typed.
+func TestCreateUserStoresTypedAndNormalisedForms(t *testing.T) {
+	normalised := map[string]bool{}
+	typed := map[string]bool{}
 
 	for _, in := range []string{"Ada@Example.com", "ADA@EXAMPLE.COM", "ada@example.com"} {
 		svc, fake := newSignUpService()
@@ -129,11 +124,20 @@ func TestCreateUserSendsOneCanonicalAddressRegardlessOfCasing(t *testing.T) {
 		if _, err := svc.CreateUser(context.Background(), req); err != nil {
 			t.Fatalf("%q: %v", in, err)
 		}
-		seen[fake.registered[0].Email] = true
+		stored := fake.registered[0]
+		normalised[stored.EmailNormalized] = true
+		typed[stored.Email] = true
+
+		if stored.Email != in {
+			t.Errorf("%q was stored as %q; the typed casing must survive", in, stored.Email)
+		}
 	}
 
-	if len(seen) != 1 {
-		t.Errorf("three spellings produced %d distinct stored addresses: %v", len(seen), seen)
+	if len(normalised) != 1 {
+		t.Errorf("three spellings produced %d normalised forms: %v — the index cannot collide them", len(normalised), normalised)
+	}
+	if len(typed) != 3 {
+		t.Errorf("expected three distinct typed forms, got %v", typed)
 	}
 }
 
@@ -230,23 +234,23 @@ func TestCreateUserAndChangePasswordShareThePolicy(t *testing.T) {
 	}
 }
 
-// The service normalises the address before handing it down, so the store only
-// ever sees the canonical form. Without this the unique index would be applied
-// to whatever the client happened to type.
-func TestCreateUserNormalisesEmailBeforeTheStore(t *testing.T) {
+// Surrounding whitespace is stripped from both forms — it is never meaningful,
+// and leaving it in the typed field would display an address with a stray space.
+func TestCreateUserTrimsBeforeStoring(t *testing.T) {
 	svc, fake := newSignUpService()
 
 	req := validSignUp()
-	req.Email = "  ada@EXAMPLE.COM  "
+	req.Email = "  Ada@EXAMPLE.COM  "
 
 	if _, err := svc.CreateUser(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.registered) != 1 {
-		t.Fatal("nothing reached the store")
+	stored := fake.registered[0]
+	if stored.Email != "Ada@EXAMPLE.COM" {
+		t.Errorf("Email = %q, want it trimmed but otherwise untouched", stored.Email)
 	}
-	if got := fake.registered[0].Email; got != "ada@example.com" {
-		t.Errorf("store received %q, want the trimmed, domain-lowercased form", got)
+	if stored.EmailNormalized != "ada@example.com" {
+		t.Errorf("EmailNormalized = %q", stored.EmailNormalized)
 	}
 }
 
@@ -425,8 +429,11 @@ func TestCreateUserReturnsTheStoredUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user.Email != "ada@example.com" {
-		t.Errorf("returned email = %q, want the normalised form", user.Email)
+	if user.Email != "ADA@Example.com" {
+		t.Errorf("returned email = %q, want the typed form", user.Email)
+	}
+	if user.EmailNormalized != "ada@example.com" {
+		t.Errorf("returned EmailNormalized = %q", user.EmailNormalized)
 	}
 	if user.Email != fake.registered[0].Email {
 		t.Error("the returned user disagrees with what was stored")
@@ -468,8 +475,9 @@ func TestSignUpAndLoginAgreeOnTheCanonicalAddress(t *testing.T) {
 	}
 
 	for i, got := range fake.lookedUp {
-		if got != created.Email {
-			t.Errorf("login queried %q but signup stored %q (case %d)", got, created.Email, i)
+		if got != created.EmailNormalized {
+			t.Errorf("login queried %q but signup stored EmailNormalized %q (case %d)",
+				got, created.EmailNormalized, i)
 		}
 	}
 }
