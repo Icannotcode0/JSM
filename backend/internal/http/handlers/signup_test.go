@@ -29,7 +29,7 @@ func TestSignUpSucceeds(t *testing.T) {
 		Name:         "Ada",
 		PasswordHash: "$2a$10$averysecretbcrypthashvalue",
 	}}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.SignUp(rec, newSignUpRequest(validSignUpBody))
@@ -60,7 +60,7 @@ func TestSignUpNeverReturnsThePasswordHash(t *testing.T) {
 		Email:        "ada@example.com",
 		PasswordHash: "$2a$10$averysecretbcrypthashvalue",
 	}}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.SignUp(rec, newSignUpRequest(validSignUpBody))
@@ -76,7 +76,7 @@ func TestSignUpNeverReturnsThePasswordHash(t *testing.T) {
 // session at all — requiring one would make the first account impossible.
 func TestSignUpNeedsNoSession(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.SignUp(rec, newSignUpRequest(validSignUpBody)) // no user on the context
@@ -91,7 +91,7 @@ func TestSignUpNeedsNoSession(t *testing.T) {
 
 func TestSignUpMalformedBody(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.SignUp(rec, newSignUpRequest(`{nope`))
@@ -106,7 +106,7 @@ func TestSignUpMalformedBody(t *testing.T) {
 
 func TestSignUpOversizedBody(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	huge := `{"email":"a@b.co","password":"ValidPass1!","name":"` +
 		strings.Repeat("x", jsmHttp.MaxBodyBytes+100) + `"}`
@@ -126,7 +126,7 @@ func TestSignUpOversizedBody(t *testing.T) {
 
 func TestSignUpForwardsTheRequestBody(t *testing.T) {
 	svc := &fakeAuthService{}
-	h := NewAuth(svc, fakeSessions{})
+	h := NewAuth(svc, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.SignUp(rec, newSignUpRequest(validSignUpBody))
@@ -174,7 +174,7 @@ func TestSignUpErrorMapping(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewAuth(&fakeAuthService{err: tc.err}, fakeSessions{})
+			h := NewAuth(&fakeAuthService{err: tc.err}, fakeSessions{}, noLimit())
 			rec := httptest.NewRecorder()
 			h.SignUp(rec, newSignUpRequest(validSignUpBody))
 
@@ -194,7 +194,7 @@ func TestSignUpErrorMapping(t *testing.T) {
 func TestSignUpDoesNotLeakInternalErrors(t *testing.T) {
 	h := NewAuth(&fakeAuthService{
 		err: errors.New("mongo: jobtracker.users index email_1 dup key"),
-	}, fakeSessions{})
+	}, fakeSessions{}, noLimit())
 
 	rec := httptest.NewRecorder()
 	h.SignUp(rec, newSignUpRequest(validSignUpBody))
@@ -214,7 +214,7 @@ func TestSignUpDoesNotReport201OnFailure(t *testing.T) {
 		metrics.ErrInvalidEmail,
 		errors.New("boom"),
 	} {
-		h := NewAuth(&fakeAuthService{err: err}, fakeSessions{})
+		h := NewAuth(&fakeAuthService{err: err}, fakeSessions{}, noLimit())
 		rec := httptest.NewRecorder()
 		h.SignUp(rec, newSignUpRequest(validSignUpBody))
 

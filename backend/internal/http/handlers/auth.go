@@ -9,6 +9,7 @@ import (
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/logbuilder"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/metrics"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/domain"
+	ratelimit "github.com/Icannotcode0/job-app-manager/backend/internal/rate-limiter"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/service"
 )
 
@@ -29,12 +30,14 @@ type SessionReader interface {
 type auth struct {
 	authenticator service.Authenticator
 	sessions      SessionReader
+	guard         ratelimit.Guard
 }
 
-func NewAuth(authenticator service.Authenticator, sessions SessionReader) *auth {
+func NewAuth(authenticator service.Authenticator, sessions SessionReader, guard ratelimit.Guard) *auth {
 	return &auth{
 		authenticator: authenticator,
 		sessions:      sessions,
+		guard:         guard,
 	}
 }
 
@@ -94,6 +97,22 @@ func (a *auth) Authenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Before the service, and therefore before bcrypt: a limiter that runs
+	// after the hash protects accounts but not the CPU.
+	//
+	// Two keys. The address rule is tight and stops one host grinding many
+	// accounts; the email rule is loose and backstops a distributed attack.
+	// Keyed on the normalised address so cycling Ada@/ADA@/aDa@ cannot mint a
+	// fresh bucket per attempt.
+	emailKey := ratelimit.Key{
+		Scope: ratelimit.ScopeLogin,
+		Type:  ratelimit.KeyEmail,
+		Value: service.NormalizeEmail(logInRequest.Email),
+	}
+	if !a.guard.AllowRequest(w, r, ratelimit.ScopeLogin, emailKey) {
+		return
+	}
+
 	authCookies, err := a.authenticator.Authenticate(ctx, logInRequest.Email, logInRequest.Password)
 	if err != nil {
 		authLogger.Error("[Authenticate]: authentication failed", logbuilder.Fields{
@@ -107,6 +126,10 @@ func (a *auth) Authenticate(w http.ResponseWriter, r *http.Request) {
 		jsmHttp.WriteJSONError(w, metrics.CodeInternalServerError, http.StatusInternalServerError)
 		return
 	}
+
+	// Cleared on success, so somebody who mistyped twice and then got it right
+	// is not left one attempt from a lockout.
+	a.guard.ResetRequest(r, ratelimit.ScopeLogin, emailKey)
 
 	// Session cookie plus the CSRF cookie rebound to the new session — both
 	// must land before the body, since WriteJSON commits the header.
@@ -139,6 +162,14 @@ func (a *auth) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			status, code = http.StatusRequestEntityTooLarge, metrics.CodeRequestTooLarge
 		}
 		jsmHttp.WriteJSONError(w, code, status)
+		return
+	}
+
+	if !a.guard.AllowRequest(w, r, ratelimit.ScopeResetPassword, ratelimit.Key{
+		Scope: ratelimit.ScopeResetPassword,
+		Type:  ratelimit.KeyUser,
+		Value: userId,
+	}) {
 		return
 	}
 
@@ -184,6 +215,13 @@ func (a *auth) SignUp(w http.ResponseWriter, r *http.Request) {
 			status, code = http.StatusRequestEntityTooLarge, metrics.CodeRequestTooLarge
 		}
 		jsmHttp.WriteJSONError(w, code, status)
+		return
+	}
+
+	// Address only, and never reset: a successful signup still consumes
+	// resources, and this is the endpoint that becomes an email-bomb vector
+	// once the mailer is real.
+	if !a.guard.AllowRequest(w, r, ratelimit.ScopeSignup) {
 		return
 	}
 

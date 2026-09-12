@@ -14,6 +14,7 @@ import (
 	"github.com/Icannotcode0/job-app-manager/backend/internal/common/redisWrap"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/config"
 	jsmhttp "github.com/Icannotcode0/job-app-manager/backend/internal/http"
+	ratelimit "github.com/Icannotcode0/job-app-manager/backend/internal/rate-limiter"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/service"
 	"github.com/Icannotcode0/job-app-manager/backend/internal/store"
 )
@@ -81,6 +82,27 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Rate limiting. Redis-backed so counters are shared across instances and
+	// survive a restart; memory-backed only when explicitly disabled, which
+	// keeps the wiring identical either way.
+	trustedProxies, err := ratelimit.ParseTrustedProxies(cfg.RateLimit.TrustedProxies)
+	if err != nil {
+		return err
+	}
+	resolver := ratelimit.NewClientIPResolver(ratelimit.ProxyConfig{
+		TrustedProxies: trustedProxies,
+		ClientIPHeader: cfg.RateLimit.ClientIPHeader,
+	})
+
+	var limiter ratelimit.Limiter
+	if cfg.RateLimit.Enabled {
+		limiter = ratelimit.NewRedisLimiter(redisClient)
+	} else {
+		log.Print("jsm: RATE_LIMIT_ENABLED=false — auth endpoints are unthrottled")
+		limiter = ratelimit.NewMemoryLimiter(ratelimit.WithPolicy(ratelimit.Policy{}))
+	}
+	guard := ratelimit.NewGuard(limiter, resolver)
+
 	store := store.NewStore(mongoClient.DB)
 	services := service.NewServices(store, sessionManager, redisClient, cfg.Mail)
 
@@ -88,7 +110,7 @@ func run() error {
 	// internal/http so main.go stays wiring only.
 	srv := &http.Server{
 		Addr:              localOnly(cfg.HTTPPort),
-		Handler:           jsmhttp.NewRouter(sessionManager, services),
+		Handler:           jsmhttp.NewRouter(sessionManager, services, guard),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

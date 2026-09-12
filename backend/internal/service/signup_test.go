@@ -104,7 +104,7 @@ func TestNormalizeEmailFoldsEverything(t *testing.T) {
 		"ADA.LOVELACE@EXAMPLE.COM",
 		"  ada.lovelace@example.com  ",
 	} {
-		if got := normalizeEmail(in); got != "ada.lovelace@example.com" {
+		if got := NormalizeEmail(in); got != "ada.lovelace@example.com" {
 			t.Errorf("%q normalised to %q, want one canonical form", in, got)
 		}
 	}

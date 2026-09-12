@@ -72,7 +72,7 @@ func (a *auth) Authenticate(ctx context.Context, email string, password string) 
 	// Normalised, not validated: a malformed address at login must fail as
 	// ordinary bad credentials, not as a distinguishable validation error that
 	// would tell a prober which addresses are even well-formed.
-	user, err := a.store.AuthenticateStore.LookupUserByEmail(ctx, normalizeEmail(email))
+	user, err := a.store.AuthenticateStore.LookupUserByEmail(ctx, NormalizeEmail(email))
 	if err != nil {
 		// Spend the same time bcrypt would have, so "no such user" and "wrong
 		// password" are indistinguishable by duration as well as by message.
@@ -288,7 +288,7 @@ func (a *auth) CreateUser(ctx context.Context, req domain.SignUpRequest) (domain
 		// Both forms: the typed one to show and to send mail to, the folded
 		// one to match on.
 		Email:           userEmail,
-		EmailNormalized: normalizeEmail(userEmail),
+		EmailNormalized: NormalizeEmail(userEmail),
 		Name:            name,
 		PasswordHash:    hash,
 	}
@@ -315,7 +315,10 @@ func (a *auth) CreateUser(ctx context.Context, req domain.SignUpRequest) (domain
 // not normalising at all, the account is stored as fix@example.com, the login
 // looks up FIX@Example.com, no row matches, and the user is told their password
 // is wrong for an account they just created.
-func normalizeEmail(input string) string {
+// NormalizeEmail is exported so the rate limiter keys on the same canonical
+// form the store matches on. Keying on the raw input would let an attacker mint
+// a fresh bucket per attempt just by varying capitalisation.
+func NormalizeEmail(input string) string {
 	return strings.ToLower(strings.TrimSpace(input))
 }
 

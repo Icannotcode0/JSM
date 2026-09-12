@@ -46,13 +46,26 @@ type MailConfig struct {
 	FromAddress string
 }
 
+// RateLimitConfig describes what the deployment sits behind.
+//
+// TrustedProxies is empty by default, which means the TCP peer is used. That is
+// the safe default: forgetting to declare a proxy keys every user on the load
+// balancer and locks out the world within seconds — loud and immediate — while
+// trusting too broadly is a silent bypass found after the fact.
+type RateLimitConfig struct {
+	Enabled        bool
+	TrustedProxies string // comma-separated CIDRs or addresses
+	ClientIPHeader string // e.g. CF-Connecting-IP, Fly-Client-IP
+}
+
 type Config struct {
-	Env      string
-	HTTPPort string
-	Mongo    MongoConfig
-	Redis    RedisConfig
-	Cookie   CookieConfig
-	Mail     MailConfig
+	Env       string
+	HTTPPort  string
+	Mongo     MongoConfig
+	Redis     RedisConfig
+	Cookie    CookieConfig
+	Mail      MailConfig
+	RateLimit RateLimitConfig
 }
 
 // Load reads configuration from process environment variables, first
@@ -80,6 +93,12 @@ func Load() Config {
 	if err != nil {
 		requireVerification = false
 	}
+	// Defaults to on. An unparseable value must not silently disable a control
+	// whose absence is invisible until someone exploits it.
+	rateLimitEnabled, err := strconv.ParseBool(getEnv("RATE_LIMIT_ENABLED", "true"))
+	if err != nil {
+		rateLimitEnabled = true
+	}
 
 	return Config{
 		Env:      getEnv("APP_ENV", "dev"),
@@ -102,6 +121,11 @@ func Load() Config {
 			Secure:            cookieSecure,
 			TTL:               time.Duration(ttlHours) * time.Hour,
 			Secret:            getEnv("SESSION_SECRET", ""),
+		},
+		RateLimit: RateLimitConfig{
+			Enabled:        rateLimitEnabled,
+			TrustedProxies: getEnv("TRUSTED_PROXIES", ""),
+			ClientIPHeader: getEnv("CLIENT_IP_HEADER", ""),
 		},
 		Mail: MailConfig{
 			RequireEmailVerification: requireVerification,
